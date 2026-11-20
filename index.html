@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>統計圖表</title>
+<!--
+  LIFF 統計儀表板（ADR 0014）。第 0 階段：確認身分與可用帳本。
+
+  這個檔案會公開在 GitHub Pages，只能放「不是祕密」的設定：
+  - LIFF_ID：LIFF app 的 ID
+  - API_URL：GAS Web App 網址（https://script.google.com/macros/s/…/exec），
+    不能帶 ?token=…（那是 LINE Webhook 的密鑰）
+  不可以放：試算表 ID、Gemini 金鑰、Channel secret、Channel access token、WEBHOOK_TOKEN。
+-->
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #1d2129;
+    --muted: #6b7280;
+    --accent: #06c755;
+    --danger: #d93025;
+    --line: #e5e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111315;
+      --card: #1c1f23;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #2bd46f;
+      --danger: #f28b82;
+      --line: #2c3036;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 16px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  ul { list-style: none; margin: 8px 0 0; padding: 0; }
+  li { padding: 10px 0; border-top: 1px solid var(--line); display: flex; justify-content: space-between; }
+  li:first-child { border-top: none; }
+  .tag { font-size: 12px; color: var(--muted); }
+  .error { color: var(--danger); }
+  .skeleton { height: 16px; border-radius: 6px; background: var(--line); margin: 8px 0; animation: pulse 1.2s infinite ease-in-out; }
+  @keyframes pulse { 50% { opacity: .5; } }
+  button {
+    margin-top: 12px; padding: 10px 16px; border: none; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: 16px;
+  }
+</style>
+</head>
+<body>
+<main id="app">
+  <div class="card">
+    <div class="skeleton" style="width:40%"></div>
+    <div class="skeleton" style="width:70%"></div>
+    <div class="skeleton" style="width:55%"></div>
+  </div>
+</main>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+  // ===== 設定區（只放公開資訊）=====
+  const CONFIG = {
+    LIFF_ID: "請填入 LIFF ID",
+    API_URL: "請填入 GAS Web App 網址（/exec 結尾，不要帶 token）"
+  };
+  // =================================
+
+  const app = document.getElementById("app");
+  const startedAt = Date.now();
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function showError(message, retry) {
+    app.innerHTML =
+      '<div class="card"><p class="error">' + escapeHtml(message) + "</p>" +
+      (retry ? '<button id="retry">重新載入</button>' : "") + "</div>";
+    if (retry) {
+      document.getElementById("retry").onclick = function () { location.reload(); };
+    }
+  }
+
+  // sessionStorage 可能被擋，一律包 try/catch
+  function getFlag(key) {
+    try { return sessionStorage.getItem(key); } catch (e) { return null; }
+  }
+  function setFlag(key, value) {
+    try { sessionStorage.setItem(key, value); } catch (e) { /* 忽略 */ }
+  }
+
+  // 呼叫 API：只用 GET、不加自訂 header（避免 CORS 預檢）
+  async function callApi(action, params) {
+    const idToken = liff.getIDToken();
+    if (!idToken) {
+      return { ok: false, error: { code: "AUTH_EXPIRED", message: "登入已過期" } };
+    }
+    const query = new URLSearchParams(Object.assign({ action: action, idToken: idToken }, params || {}));
+    const res = await fetch(CONFIG.API_URL + "?" + query.toString());
+    return res.json();
+  }
+
+  function relogin() {
+    // 避免無限重新登入：同一個分頁只自動重來一次
+    if (getFlag("liff_relogin") === "1") {
+      showError("登入已過期，請關閉後從 LINE 重新開啟", false);
+      return;
+    }
+    setFlag("liff_relogin", "1");
+    liff.logout();
+    liff.login({ redirectUri: location.href });
+  }
+
+  function render(data, elapsedMs) {
+    const books = data.books || [];
+    app.innerHTML =
+      '<div class="card">' +
+        "<h1>你好，" + escapeHtml(data.user.alias) + "</h1>" +
+        '<div class="muted">可用帳本 ' + books.length + " 本・載入 " + (elapsedMs / 1000).toFixed(1) + " 秒</div>" +
+        "<ul>" +
+          books.map(function (b) {
+            return "<li><span>" + escapeHtml(b.book_name) +
+              (b.book_id === data.default_book_id ? "（預設）" : "") + "</span>" +
+              '<span class="tag">' + (b.book_type === "family" ? "家庭" : "個人") + "</span></li>";
+          }).join("") +
+        "</ul>" +
+        (books.length === 0 ? '<p class="muted">目前沒有可用的帳本</p>' : "") +
+      "</div>";
+  }
+
+  async function main() {
+    try {
+      await liff.init({ liffId: CONFIG.LIFF_ID });
+    } catch (e) {
+      showError("LIFF 初始化失敗，請確認從 LINE 開啟", true);
+      return;
+    }
+
+    // 在電腦瀏覽器開啟時，先用 LINE 帳號登入
+    if (!liff.isLoggedIn()) {
+      liff.login({ redirectUri: location.href });
+      return;
+    }
+
+    let result;
+    try {
+      result = await callApi("bootstrap");
+    } catch (e) {
+      showError("連線失敗，請稍後再試", true);
+      return;
+    }
+
+    if (result.ok) {
+      setFlag("liff_relogin", "");
+      render(result.data, Date.now() - startedAt);
+      return;
+    }
+
+    const code = result.error && result.error.code;
+    if (code === "AUTH_EXPIRED" || code === "AUTH_INVALID") {
+      relogin();
+      return;
+    }
+    showError((result.error && result.error.message) || "發生錯誤", true);
+  }
+
+  main();
+</script>
+</body>
+</html>
