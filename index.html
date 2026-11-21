@@ -207,7 +207,7 @@
   </div>
 </main>
 <!-- 版本號：每次更新這個檔案都要改（寫死在 HTML，JS 出錯也看得到；手機上看到舊版號 = 還在用快取） -->
-<footer class="version">版本 2026-11-21 第 2 階段</footer>
+<footer class="version">版本 2026-11-21b 第 2 階段</footer>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -477,7 +477,7 @@
     reload();
   }
 
-  // ---------- 成員分布（家庭帳本） ----------
+  // ---------- 誰先墊的（家庭帳本、支出：未核銷依付款人） ----------
 
   function renderMembers(data) {
     const box = $("members");
@@ -487,12 +487,12 @@
       return;
     }
     box.hidden = false;
-    const total = data.totals.total;
+    const total = data.unsettled_total || 0;
     const color = cssVar("--s1");
     box.innerHTML =
-      "<h2>誰付的</h2>" +
+      '<div class="head"><h2>誰先墊的</h2><span class="muted">未核銷</span></div>' +
       (data.by_member.length === 0
-        ? '<div class="empty">這段期間沒有記帳</div>'
+        ? '<div class="empty">這段期間都核銷了</div>'
         : '<ul class="members">' + data.by_member.map(function (m) {
             const pct = total > 0 ? Math.round(m.amount / total * 1000) / 10 : 0;
             return "<li><span>" + escapeHtml(m.name) + '</span><span class="amt">' + money(m.amount) + "</span>" +
@@ -918,8 +918,8 @@
       by_month: ["2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11"].map(function (m, i) {
         return { month: m, amount: Math.round(total * (0.6 + ((i * 7) % 10) / 12)), count: 40 + i };
       }),
-      by_member: params.bookId === "B1" ? [{ name: "老公", amount: Math.round(total * 0.62), count: 51 }, { name: "老婆", amount: total - Math.round(total * 0.62), count: 32 }] : null,
-      unsettled_total: params.bookId === "B1" ? 3120 : null,
+      by_member: params.bookId === "B1" && params.type === "expense" ? [{ name: "老公", amount: 1980, count: 5 }, { name: "老婆", amount: 1140, count: 3 }] : null,
+      unsettled_total: params.bookId === "B1" && params.type === "expense" ? 3120 : null,
       by_category: rows.map(function (r) {
         return { name: r[0] || "待確認", path: r[0] ? (params.category ? params.category + "/" : "") + r[0] : null, drillable: !!r[3], amount: r[1], count: r[2], percent: Math.round(r[1] / total * 1000) / 10 };
       })
