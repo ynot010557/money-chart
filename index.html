@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>統計圖表</title>
 <!--
-  LIFF 統計儀表板（ADR 0014）。第 1 階段：篩選列、總覽、分類占比（含下鑽）。
+  LIFF 統計儀表板（ADR 0014）。第 1～2 階段：篩選列、總覽、分類占比（含下鑽）、每月趨勢、成員分布、交易明細。
 
   這個檔案會公開在 GitHub Pages，只能放「不是祕密」的設定：
   - LIFF_ID：LIFF app 的 ID
@@ -30,6 +30,7 @@
     --danger: #d03b3b;
     --chip: #f0efec;
     --other: #b5b3ab;
+    --bar-dim: #b7d3f6;
     --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
     --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
   }
@@ -48,6 +49,7 @@
       --danger: #e66767;
       --chip: #262624;
       --other: #5d5c57;
+      --bar-dim: #184f95;
       --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
       --s5: #d55181; --s6: #0ca30c; --s7: #9085e9; --s8: #e66767;
     }
@@ -139,6 +141,25 @@
   .bar { flex: 1; height: 4px; background: var(--grid); border-radius: 2px; overflow: hidden; }
   .bar span { display: block; height: 100%; border-radius: 2px; }
 
+  .trend-wrap { position: relative; height: 200px; }
+  .members { list-style: none; margin: 0; padding: 0; }
+  .members li { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 8px 0; border-top: 1px solid var(--grid); }
+  .members li:first-child { border-top: none; }
+  .members .amt { text-align: right; font-variant-numeric: tabular-nums; }
+  .members .pct { grid-column: 1 / 3; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+  .unsettled { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--grid); display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+
+  .txs { list-style: none; margin: 0; padding: 0; }
+  .txs li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 0; border-top: 1px solid var(--grid); }
+  .txs li:first-child { border-top: none; }
+  .txs .note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .txs .amt { text-align: right; font-variant-numeric: tabular-nums; }
+  .txs .meta { color: var(--muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .txs .sub { text-align: right; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--chip); color: var(--text-2); margin-left: 4px; }
+  .more { width: 100%; margin-top: 8px; background: var(--chip); color: var(--text); }
+  .head { display: flex; justify-content: space-between; align-items: baseline; }
+
   .empty { text-align: center; padding: 24px 0; color: var(--muted); }
   .skeleton { height: 16px; border-radius: 6px; background: var(--grid); margin: 8px 0; animation: pulse 1.2s infinite ease-in-out; }
   .skeleton.big { height: 36px; width: 50%; }
@@ -179,6 +200,9 @@
 
     <section class="card" id="overview" aria-live="polite"></section>
     <section class="card" id="category"></section>
+    <section class="card" id="trend"></section>
+    <section class="card" id="members" hidden></section>
+    <section class="card" id="txlist"></section>
   </div>
 </main>
 
@@ -206,10 +230,15 @@
     period: "month",
     from: "", to: "",
     category: "",       // 目前下鑽的分類路徑；空白 = 大分類
-    seq: 0              // 只採用最新一次請求的結果
+    seq: 0,             // 只採用最新一次請求的結果
+    txSeq: 0,
+    txOffset: 0
   };
 
+  const TX_PAGE = 50;
+
   let donut = null;
+  let trendChart = null;
 
   // ---------- 小工具 ----------
 
@@ -328,6 +357,10 @@
   function renderLoading() {
     $("overview").innerHTML = '<div class="skeleton" style="width:30%"></div><div class="skeleton big"></div><div class="skeleton" style="width:60%"></div>';
     $("category").innerHTML = '<div class="skeleton" style="width:30%"></div><div class="skeleton circle"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    $("trend").innerHTML = '<div class="skeleton" style="width:40%"></div><div class="skeleton" style="height:160px"></div>';
+    if (!$("members").hidden) {
+      $("members").innerHTML = '<div class="skeleton" style="width:30%"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    }
   }
 
   function renderStats(data) {
@@ -345,6 +378,200 @@
       (t.unconverted_count > 0 ? '<div class="warn">⚠️ 有 ' + t.unconverted_count + " 筆外幣還沒換算台幣，以 0 計</div>" : "");
 
     renderCategory(data);
+    renderTrend(data);
+    renderMembers(data);
+  }
+
+  // ---------- 每月趨勢 ----------
+
+  function renderTrend(data) {
+    const box = $("trend");
+    const months = data.by_month || [];
+    const scope = data.category ? "・" + escapeHtml(data.category.label) : "";
+    box.innerHTML =
+      '<div class="head"><h2>近 12 個月' + (data.type === "income" ? "收入" : "支出") + scope + '</h2><span class="muted">點長條看那個月</span></div>' +
+      '<div class="trend-wrap"><canvas id="trendCanvas" role="img" aria-label="近 12 個月每月金額長條圖"></canvas></div>';
+
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+    if (typeof Chart === "undefined") return;
+
+    // 目前期間涵蓋的月份用深色，其他月份用淺色
+    const fromMonth = state.from.slice(0, 7), toMonth = state.to.slice(0, 7);
+    const strong = cssVar("--s1"), dim = cssVar("--bar-dim");
+    const colors = months.map(function (m) {
+      return m.month >= fromMonth && m.month <= toMonth ? strong : dim;
+    });
+
+    trendChart = new Chart($("trendCanvas"), {
+      type: "bar",
+      data: {
+        labels: months.map(function (m) { return Number(m.month.slice(5)) + "月"; }),
+        datasets: [{
+          data: months.map(function (m) { return m.amount; }),
+          backgroundColor: colors,
+          borderRadius: { topLeft: 4, topRight: 4 },
+          borderSkipped: "bottom",
+          maxBarThickness: 18
+        }]
+      },
+      options: {
+        maintainAspectRatio: false,
+        animation: { duration: 250 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                const m = months[items[0].dataIndex].month;
+                return m.slice(0, 4) + " 年 " + Number(m.slice(5)) + " 月";
+              },
+              label: function (ctx) {
+                const m = months[ctx.dataIndex];
+                return " " + money(m.amount) + "・" + m.count + " 筆";
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            border: { color: cssVar("--grid") },
+            ticks: { color: cssVar("--muted"), font: { size: 11 }, maxRotation: 0, autoSkip: true }
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: cssVar("--grid") },
+            border: { display: false },
+            ticks: {
+              color: cssVar("--muted"), font: { size: 11 }, maxTicksLimit: 5,
+              callback: function (v) { return v >= 10000 ? (v / 10000) + "萬" : v.toLocaleString("en-US"); }
+            }
+          }
+        },
+        onClick: function (evt, elements) {
+          if (!elements.length) return;
+          selectMonth(months[elements[0].index].month);
+        }
+      }
+    });
+  }
+
+  // 點某個月 → 期間切到那個月（本月、上月對應到按鈕，其他用自訂）
+  function selectMonth(month) {
+    const y = Number(month.slice(0, 4)), m = Number(month.slice(5, 7));
+    const from = ymd(y, m, 1), to = ymd(y, m, lastDay(y, m));
+    let period = "custom";
+    ["month", "lastMonth"].forEach(function (p) {
+      const r = periodRange(p);
+      if (r.from === from && r.to === to) period = p;
+    });
+    state.period = period;
+    state.from = from; state.to = to;
+    setPressed("[data-period]", "period", period);
+    $("from").value = from; $("to").value = to;
+    $("custom").classList.toggle("show", period === "custom");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    reload();
+  }
+
+  // ---------- 成員分布（家庭帳本） ----------
+
+  function renderMembers(data) {
+    const box = $("members");
+    if (!data.by_member) {
+      box.hidden = true;
+      box.innerHTML = "";
+      return;
+    }
+    box.hidden = false;
+    const total = data.totals.total;
+    const color = cssVar("--s1");
+    box.innerHTML =
+      "<h2>誰付的</h2>" +
+      (data.by_member.length === 0
+        ? '<div class="empty">這段期間沒有記帳</div>'
+        : '<ul class="members">' + data.by_member.map(function (m) {
+            const pct = total > 0 ? Math.round(m.amount / total * 1000) / 10 : 0;
+            return "<li><span>" + escapeHtml(m.name) + '</span><span class="amt">' + money(m.amount) + "</span>" +
+              '<span class="pct"><span class="bar"><span style="width:' + Math.min(100, pct) + "%;background:" + color + '"></span></span>' + pct + "%・" + m.count + " 筆</span></li>";
+          }).join("") + "</ul>") +
+      (data.unsettled_total == null ? "" :
+        '<div class="unsettled"><span>未核銷合計</span><strong>' + money(data.unsettled_total) + "</strong></div>");
+  }
+
+  // ---------- 交易明細 ----------
+
+  function txParams() {
+    const p = statsParams();
+    p.offset = state.txOffset;
+    p.limit = TX_PAGE;
+    return p;
+  }
+
+  function txRow(tx) {
+    const d = tx.date.slice(5).replace("-", "/");
+    let amountText = money(tx.amount);
+    let sub = "";
+    if (tx.currency) {
+      sub = tx.currency + " " + Number(tx.original_amount || 0).toLocaleString("en-US");
+      if (tx.amount_missing) amountText = "未換算";
+    }
+    return "<li>" +
+      '<span class="note">' + escapeHtml(tx.note || tx.category) + "</span>" +
+      '<span class="amt">' + amountText + "</span>" +
+      '<span class="meta">' + d + "・" + escapeHtml(tx.category) + "・" + escapeHtml(tx.payer) +
+        (tx.settlement_status === "未核銷" ? '<span class="tag">未核銷</span>' : "") + "</span>" +
+      '<span class="sub">' + escapeHtml(sub) + "</span>" +
+    "</li>";
+  }
+
+  async function loadTx(reset) {
+    const box = $("txlist");
+    if (reset) {
+      state.txOffset = 0;
+      box.innerHTML = '<h2>明細</h2><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton" style="width:70%"></div>';
+    }
+    const seq = ++state.txSeq;
+    let result;
+    try {
+      result = await callApi("transactions", txParams());
+    } catch (e) {
+      if (seq === state.txSeq) box.insertAdjacentHTML("beforeend", '<p class="error">明細載入失敗，請稍後再試</p>');
+      return;
+    }
+    if (seq !== state.txSeq) return;
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      box.innerHTML = '<h2>明細</h2><p class="error">' + escapeHtml((result.error && result.error.message) || "發生錯誤") + "</p>";
+      return;
+    }
+    const data = result.data;
+    const scope = state.category ? "・" + escapeHtml(state.category.split(SEP).join(" / ")) : "";
+
+    if (reset) {
+      box.innerHTML =
+        '<div class="head"><h2>明細' + scope + '</h2><span class="muted">共 ' + data.total + " 筆</span></div>" +
+        (data.total === 0 ? '<div class="empty">這段期間沒有記帳</div>' : '<ul class="txs" id="txs"></ul>');
+    }
+    const ul = $("txs");
+    if (ul) ul.insertAdjacentHTML("beforeend", data.items.map(txRow).join(""));
+
+    const oldBtn = $("txMore");
+    if (oldBtn) oldBtn.remove();
+    state.txOffset = data.offset + data.items.length;
+    if (data.hasMore) {
+      box.insertAdjacentHTML("beforeend", '<button type="button" class="btn more" id="txMore">載入更多（還有 ' + (data.total - state.txOffset) + " 筆）</button>");
+      $("txMore").addEventListener("click", function () {
+        this.disabled = true;
+        this.textContent = "載入中…";
+        loadTx(false);
+      });
+    }
+  }
+
+  function reload() {
+    loadStats();
+    loadTx(true);
   }
 
   function renderCrumbs() {
@@ -423,7 +650,7 @@
     $("category").querySelectorAll("[data-crumb]").forEach(function (b) {
       b.addEventListener("click", function () {
         state.category = b.dataset.crumb;
-        loadStats();
+        reload();
       });
     });
   }
@@ -473,7 +700,7 @@
   function drill(row) {
     if (!row || !row.drillable || !row.path) return;
     state.category = row.path;
-    loadStats();
+    reload();
   }
 
   // ---------- 載入 ----------
@@ -497,7 +724,10 @@
     if (handleAuthError(result)) return;
     $("overview").innerHTML = '<p class="error">' + escapeHtml((result.error && result.error.message) || "發生錯誤") + "</p>";
     $("category").innerHTML = "";
+    $("trend").innerHTML = "";
+    $("members").hidden = true;
     destroyDonut();
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
   }
 
   function setPressed(selector, attr, value) {
@@ -511,7 +741,7 @@
       state.bookId = $("book").value;
       state.category = "";
       storeSet("localStorage", BOOK_KEY, state.bookId);
-      loadStats();
+      reload();
     });
 
     document.querySelectorAll("[data-type]").forEach(function (b) {
@@ -520,7 +750,7 @@
         state.type = b.dataset.type;
         state.category = "";
         setPressed("[data-type]", "type", state.type);
-        loadStats();
+        reload();
       });
     });
 
@@ -536,7 +766,7 @@
         }
         const r = periodRange(state.period);
         state.from = r.from; state.to = r.to;
-        loadStats();
+        reload();
       });
     });
 
@@ -545,7 +775,7 @@
       if (!f || !t) return;
       state.from = f <= t ? f : t;
       state.to = f <= t ? t : f;
-      loadStats();
+      reload();
     });
 
     // 手機切換深淺色時重畫（顏色從 CSS 變數讀）
@@ -622,6 +852,7 @@
       storeSet("localStorage", BOOK_KEY, state.bookId);
       loadStats();
     }
+    loadTx(true);
   }
 
   // ---------- 假資料（?mock=1） ----------
@@ -647,6 +878,24 @@
         categories: categories, default_book_id: "B2"
       } });
     }
+    if (action === "transactions") {
+      const notes = ["晚餐（品田牧場）", "全聯", "加油", "午餐", "飲料", "電費", "停車", "牙醫"];
+      const all = [];
+      for (let i = 0; i < 83; i++) {
+        all.push({
+          date: "2026-11-" + String(21 - (i % 21)).padStart(2, "0"),
+          category: ["餐飲 / 正餐 / 晚餐", "居家 / 日用品", "交通 / 加油", "餐飲 / 正餐 / 午餐", "餐飲 / 飲料"][i % 5],
+          amount: 80 + (i * 37) % 900, amount_missing: i === 5, currency: i === 5 ? "JPY" : "",
+          original_amount: i === 5 ? 1200 : null,
+          note: notes[i % notes.length], payer: i % 3 ? "老公" : "老婆",
+          settlement_status: i % 4 ? "已核銷" : "未核銷"
+        });
+      }
+      const off = Number(params.offset) || 0, lim = Number(params.limit) || 50;
+      return new Promise(function (resolve) { setTimeout(function () { resolve({ ok: true, data: {
+        items: all.slice(off, off + lim), total: all.length, offset: off, hasMore: off + lim < all.length
+      } }); }, 500); });
+    }
     const level = params.category ? params.category.split("/").length : 0;
     let rows;
     if (level === 0) {
@@ -663,6 +912,11 @@
       book: { book_id: params.bookId }, range: { from: params.from, to: params.to }, type: params.type,
       category: params.category ? { path: params.category, name: params.category.split("/").pop(), label: params.category.split("/").join(" / ") } : null,
       totals: { total: total, count: 83, days: 21, daily_average: Math.round(total / 21), unconverted_count: 1 },
+      by_month: ["2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11"].map(function (m, i) {
+        return { month: m, amount: Math.round(total * (0.6 + ((i * 7) % 10) / 12)), count: 40 + i };
+      }),
+      by_member: params.bookId === "B1" ? [{ name: "老公", amount: Math.round(total * 0.62), count: 51 }, { name: "老婆", amount: total - Math.round(total * 0.62), count: 32 }] : null,
+      unsettled_total: params.bookId === "B1" ? 3120 : null,
       by_category: rows.map(function (r) {
         return { name: r[0] || "待確認", path: r[0] ? (params.category ? params.category + "/" : "") + r[0] : null, drillable: !!r[3], amount: r[1], count: r[2], percent: Math.round(r[1] / total * 1000) / 10 };
       })
