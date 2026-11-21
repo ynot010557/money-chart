@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>家庭日記</title>
+<!--
+  LIFF 日記瀏覽頁（ADR 0015）：關鍵字搜尋、活動與日期篩選，只看不改（修改、刪除在聊天室）。
+
+  這個檔案會公開在 GitHub Pages，只能放「不是祕密」的設定：
+  - LIFF_ID：日記頁自己的 LIFF app ID（和統計頁不同）
+  - API_URL：GAS Web App 網址（https://script.google.com/macros/s/…/exec），
+    不能帶 ?token=…（那是 LINE Webhook 的密鑰）
+  不可以放：試算表 ID、Gemini 金鑰、Channel secret、Channel access token、WEBHOOK_TOKEN。
+
+  網址加 ?mock=1 會用假資料顯示畫面（不登入、不呼叫 API），給開發時在電腦上看版面。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --text: #0b0b0b;
+    --text-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --border: rgba(11, 11, 11, 0.10);
+    --accent: #06c755;
+    --accent-ink: #ffffff;
+    --danger: #d03b3b;
+    --chip: #f0efec;
+    --mark: #fbe38e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --text: #f0efec;
+      --text-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --border: rgba(255, 255, 255, 0.10);
+      --accent: #2bd46f;
+      --accent-ink: #0b0b0b;
+      --danger: #e66767;
+      --chip: #262624;
+      --mark: #6b5500;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-tap-highlight-color: transparent;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 0 16px 32px; }
+
+  /* 篩選列（固定在頂端） */
+  .filters {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--page);
+    padding: 12px 0 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  select, input[type="date"], input[type="search"] {
+    font: inherit; font-size: 15px; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 8px; min-width: 0;
+  }
+  input[type="search"] { flex: 1; padding: 7px 10px; }
+  select { flex: 1; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chips button {
+    font: inherit; font-size: 14px; border: none; background: var(--chip); color: var(--text-2);
+    padding: 6px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  }
+  .chips button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .custom { display: none; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .custom.show { display: flex; }
+  .custom input { flex: 1; }
+  .btn {
+    font: inherit; font-size: 14px; border: none; border-radius: 8px;
+    background: var(--accent); color: var(--accent-ink); padding: 7px 12px; cursor: pointer; flex-shrink: 0;
+  }
+  .btn.plain { background: var(--chip); color: var(--text); }
+
+  .muted { color: var(--muted); font-size: 13px; }
+  .error { color: var(--danger); }
+  .status { margin: 0 0 8px; }
+
+  /* 日期分組 */
+  .day {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin: 18px 2px 8px; font-weight: 600; color: var(--text-2); font-size: 15px;
+  }
+  .day:first-child { margin-top: 4px; }
+  .day .spend { font-weight: 400; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+  }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+  .meta .scope { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--chip); color: var(--text-2); margin-left: 4px; }
+  .content { white-space: pre-wrap; word-break: break-word; }
+  .content.clamp { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }
+  .expand { font: inherit; font-size: 14px; border: none; background: none; color: var(--accent); padding: 4px 0 0; cursor: pointer; }
+  mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1px; }
+  .tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .tags span { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--chip); color: var(--text-2); }
+
+  .txs { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--grid); }
+  .txs li { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; padding: 4px 0; font-size: 14px; }
+  .txs .note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .txs .amt { text-align: right; font-variant-numeric: tabular-nums; }
+  .txs .sub { grid-column: 1 / 3; color: var(--muted); font-size: 12px; }
+  .txs .sub:empty { display: none; }
+  .txs-title { font-size: 12px; color: var(--muted); }
+
+  .more { width: 100%; margin-top: 8px; }
+  .empty { text-align: center; padding: 32px 0; color: var(--muted); }
+  .skeleton { height: 16px; border-radius: 6px; background: var(--grid); margin: 8px 0; animation: pulse 1.2s infinite ease-in-out; }
+  @keyframes pulse { 50% { opacity: .5; } }
+  .version { text-align: center; color: var(--muted); font-size: 12px; margin: 8px 0 24px; }
+</style>
+</head>
+<body>
+<main>
+  <div id="boot" class="card" style="margin-top:16px">
+    <div class="skeleton" style="width:40%"></div>
+    <div class="skeleton" style="width:70%"></div>
+    <div class="skeleton" style="width:55%"></div>
+  </div>
+
+  <div id="page" hidden>
+    <div class="filters">
+      <form class="row" id="searchForm" role="search">
+        <input type="search" id="q" placeholder="搜尋日記內容、標籤" maxlength="50" enterkeyhint="search" aria-label="關鍵字">
+        <button type="submit" class="btn">搜尋</button>
+      </form>
+      <div class="row">
+        <select id="event" aria-label="活動"></select>
+      </div>
+      <div class="row chips" role="group" aria-label="期間">
+        <button type="button" data-period="all" aria-pressed="true">全部</button>
+        <button type="button" data-period="month" aria-pressed="false">本月</button>
+        <button type="button" data-period="lastMonth" aria-pressed="false">上月</button>
+        <button type="button" data-period="custom" aria-pressed="false">自訂</button>
+      </div>
+      <div class="row custom" id="custom">
+        <input type="date" id="from" aria-label="開始日">
+        <span class="muted">～</span>
+        <input type="date" id="to" aria-label="結束日">
+        <button type="button" class="btn" id="apply">套用</button>
+      </div>
+    </div>
+
+    <p class="muted status" id="status" aria-live="polite"></p>
+    <div id="list"></div>
+  </div>
+</main>
+<!-- 版本號：每次更新這個檔案都要改（寫死在 HTML，JS 出錯也看得到；手機上看到舊版號 = 還在用快取） -->
+<footer class="version">版本 2026-11-21 日記頁</footer>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+  // ===== 設定區（只放公開資訊）=====
+  const CONFIG = {
+    LIFF_ID: "2012731001-gRUFYvRt",  // 日記頁自己的 LIFF ID（和統計頁不同）
+    API_URL: "https://script.google.com/macros/s/AKfycbydOFXSiDdT5RAbLBGi97XF7U_zEtYxRRo4_FSWtsYkfHfO8mzaxpm1t_f8M1klsLiyuQ/exec"
+  };
+  // =================================
+
+  const MOCK = new URLSearchParams(location.search).get("mock") === "1";
+  const PAGE = 20;
+  const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+
+  const $ = function (id) { return document.getElementById(id); };
+
+  const state = {
+    keyword: "",
+    eventId: "",
+    period: "all",
+    from: "", to: "",
+    offset: 0,
+    seq: 0,           // 只採用最新一次請求的結果
+    lastDate: ""      // 已畫出的最後一個日期（分頁接續時不重複日期標題）
+  };
+
+  // ---------- 小工具 ----------
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function money(n) {
+    return "NT$" + Math.round(Number(n) || 0).toLocaleString("en-US");
+  }
+
+  function todayParts() {
+    const s = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    return { y: Number(s.slice(0, 4)), m: Number(s.slice(5, 7)), d: Number(s.slice(8, 10)), text: s };
+  }
+  function ymd(y, m, d) {
+    return y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+  }
+  function lastDay(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+
+  function periodRange(period) {
+    const t = todayParts();
+    if (period === "lastMonth") {
+      const y = t.m === 1 ? t.y - 1 : t.y;
+      const m = t.m === 1 ? 12 : t.m - 1;
+      return { from: ymd(y, m, 1), to: ymd(y, m, lastDay(y, m)) };
+    }
+    if (period === "month") {
+      return { from: ymd(t.y, t.m, 1), to: ymd(t.y, t.m, lastDay(t.y, t.m)) };
+    }
+    return { from: "", to: "" };
+  }
+
+  // 2026-11-21 → 11/21（六）；不是今年時加年份
+  function dateLabel(date) {
+    const p = date.split("-").map(Number);
+    const w = WEEKDAYS[new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()];
+    const md = p[1] + "/" + p[2] + "（" + w + "）";
+    return p[0] === todayParts().y ? md : p[0] + "/" + md;
+  }
+
+  function shortDate(date) {
+    if (!date) return "";
+    const p = date.split("-").map(Number);
+    return p[1] + "/" + p[2];
+  }
+
+  // 關鍵字標亮：先找位置再逐段跳脫，不會把 HTML 當成內容比對
+  function highlight(text, keyword) {
+    const raw = String(text || "");
+    if (!keyword) return escapeHtml(raw);
+    const lower = raw.toLowerCase(), key = keyword.toLowerCase();
+    let out = "", i = 0, j;
+    while ((j = lower.indexOf(key, i)) >= 0) {
+      out += escapeHtml(raw.slice(i, j)) + "<mark>" + escapeHtml(raw.slice(j, j + key.length)) + "</mark>";
+      i = j + key.length;
+    }
+    return out + escapeHtml(raw.slice(i));
+  }
+
+  // ---------- API ----------
+
+  async function callApi(action, params) {
+    if (MOCK) return mockApi(action, params);
+    const idToken = liff.getIDToken();
+    if (!idToken) return { ok: false, error: { code: "AUTH_EXPIRED", message: "登入已過期" } };
+    // 只用 GET、不加自訂 header（避免 CORS 預檢）
+    const query = new URLSearchParams(Object.assign({ action: action, idToken: idToken }, params || {}));
+    const res = await fetch(CONFIG.API_URL + "?" + query.toString());
+    return res.json();
+  }
+
+  function handleAuthError(result) {
+    const code = result && result.error && result.error.code;
+    if (code !== "AUTH_EXPIRED" && code !== "AUTH_INVALID") return false;
+    // 避免無限重新登入：同一個分頁只自動重來一次
+    let tried = null;
+    try { tried = sessionStorage.getItem("liff_relogin"); } catch (e) { /* 忽略 */ }
+    if (tried === "1") {
+      showFatal("登入已過期，請關閉後從 LINE 重新開啟");
+      return true;
+    }
+    try { sessionStorage.setItem("liff_relogin", "1"); } catch (e) { /* 忽略 */ }
+    liff.logout();
+    liff.login({ redirectUri: location.href });
+    return true;
+  }
+
+  function showFatal(message) {
+    $("page").hidden = true;
+    $("boot").hidden = false;
+    $("boot").innerHTML = '<p class="error">' + escapeHtml(message) + '</p><button class="btn" onclick="location.reload()">重新載入</button>';
+  }
+
+  function queryParams() {
+    const p = { offset: state.offset, limit: PAGE };
+    if (state.keyword) p.q = state.keyword;
+    if (state.eventId) p.eventId = state.eventId;
+    if (state.from) { p.from = state.from; p.to = state.to; }
+    return p;
+  }
+
+  // ---------- 畫面 ----------
+
+  function txRow(tx) {
+    let amountText = money(tx.amount);
+    let sub = "";
+    if (tx.currency) {
+      sub = tx.currency + " " + Number(tx.original_amount || 0).toLocaleString("en-US");
+      if (tx.amount_missing) amountText = "未換算";
+    }
+    if (tx.income) sub = (sub ? sub + "・" : "") + "收入";
+    return "<li>" +
+      '<span class="note">' + escapeHtml(tx.note || tx.category) + "</span>" +
+      '<span class="amt">' + amountText + "</span>" +
+      '<span class="sub">' + escapeHtml(sub) + "</span>" +
+    "</li>";
+  }
+
+  function diaryCard(d) {
+    const parts = [escapeHtml(d.author)];
+    if (d.event) parts.push(escapeHtml(d.event.name) + (d.event.day > 0 ? " 第 " + d.event.day + " 天" : ""));
+    return '<article class="card">' +
+      '<div class="meta">' + parts.join("・") +
+        '<span class="scope">' + (d.scope === "personal" ? "🔒 個人" : "家庭") + "</span></div>" +
+      '<div class="content clamp">' + highlight(d.content, state.keyword) + "</div>" +
+      '<button type="button" class="expand" hidden>展開全文</button>' +
+      (d.tags && d.tags.length
+        ? '<div class="tags">' + d.tags.map(function (t) { return "<span>#" + highlight(t, state.keyword) + "</span>"; }).join("") + "</div>"
+        : "") +
+      (d.transactions && d.transactions.length
+        ? '<ul class="txs"><li class="txs-title">這篇記的帳</li>' + d.transactions.map(txRow).join("") + "</ul>"
+        : "") +
+    "</article>";
+  }
+
+  function renderStatus(total) {
+    let text;
+    if (state.keyword) {
+      text = total > 0 ? "找到 " + total + " 篇含「" + state.keyword + "」的日記" : "";
+    } else {
+      text = total > 0 ? "共 " + total + " 篇" : "";
+    }
+    $("status").textContent = text;
+  }
+
+  // 內容超過 8 行才顯示「展開全文」
+  function bindExpand(root) {
+    root.querySelectorAll(".card").forEach(function (card) {
+      const content = card.querySelector(".content");
+      const btn = card.querySelector(".expand");
+      if (!content || !btn || btn.dataset.bound) return;
+      if (content.offsetParent === null) return; // 還沒顯示時量不到高度，等頁面顯示後再量
+      btn.dataset.bound = "1";
+      if (content.scrollHeight > content.clientHeight + 2) {
+        btn.hidden = false;
+        btn.addEventListener("click", function () {
+          content.classList.remove("clamp");
+          btn.remove();
+        });
+      } else {
+        content.classList.remove("clamp");
+      }
+    });
+  }
+
+  async function load(reset) {
+    const list = $("list");
+    if (reset) {
+      state.offset = 0;
+      state.lastDate = "";
+      $("status").textContent = "";
+      list.innerHTML = '<div class="card"><div class="skeleton" style="width:35%"></div><div class="skeleton"></div><div class="skeleton" style="width:80%"></div></div>' +
+        '<div class="card"><div class="skeleton" style="width:35%"></div><div class="skeleton"></div></div>';
+    }
+    const seq = ++state.seq;
+    let result;
+    try {
+      result = await callApi("diaries", queryParams());
+    } catch (e) {
+      if (seq !== state.seq) return;
+      if (reset) list.innerHTML = "";
+      list.insertAdjacentHTML("beforeend", '<p class="error">載入失敗，請稍後再試</p>');
+      return;
+    }
+    if (seq !== state.seq) return;
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      list.innerHTML = '<p class="error">' + escapeHtml((result.error && result.error.message) || "發生錯誤") + "</p>";
+      return;
+    }
+
+    const data = result.data;
+    if (reset) {
+      list.innerHTML = "";
+      renderStatus(data.total);
+      if (data.total === 0) {
+        list.innerHTML = '<div class="empty">' +
+          (state.keyword ? "找不到含「" + escapeHtml(state.keyword) + "」的日記" : "這段期間沒有日記") +
+          "</div>";
+        return;
+      }
+    }
+
+    const oldBtn = $("more");
+    if (oldBtn) oldBtn.remove();
+
+    let html = "";
+    data.items.forEach(function (d) {
+      if (d.date !== state.lastDate) {
+        state.lastDate = d.date;
+        const spend = data.day_totals && data.day_totals[d.date];
+        html += '<div class="day"><span>' + dateLabel(d.date) + "</span>" +
+          '<span class="spend">當天花費 ' + money(spend || 0) + "</span></div>";
+      }
+      html += diaryCard(d);
+    });
+    const holder = document.createElement("div");
+    holder.innerHTML = html;
+    list.appendChild(holder);
+    bindExpand(holder);
+
+    state.offset = data.offset + data.items.length;
+    if (data.hasMore) {
+      list.insertAdjacentHTML("beforeend", '<button type="button" class="btn plain more" id="more">載入更多（還有 ' + (data.total - state.offset) + " 篇）</button>");
+      $("more").addEventListener("click", function () {
+        this.disabled = true;
+        this.textContent = "載入中…";
+        load(false);
+      });
+    }
+  }
+
+  function setPeriod(period) {
+    state.period = period;
+    document.querySelectorAll("[data-period]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.period === period));
+    });
+    $("custom").classList.toggle("show", period === "custom");
+  }
+
+  function bindFilters() {
+    $("searchForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      state.keyword = $("q").value.normalize("NFKC").trim();
+      $("q").blur(); // 收起手機鍵盤
+      load(true);
+    });
+
+    // 清除搜尋框（按 ✕）時回到全部
+    $("q").addEventListener("search", function () {
+      if (!$("q").value && state.keyword) {
+        state.keyword = "";
+        load(true);
+      }
+    });
+
+    // 選活動時期間回到「全部」：活動的日記可能跨月，避免篩到空的
+    $("event").addEventListener("change", function () {
+      state.eventId = $("event").value;
+      if (state.eventId) {
+        setPeriod("all");
+        state.from = ""; state.to = "";
+      }
+      load(true);
+    });
+
+    document.querySelectorAll("[data-period]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        setPeriod(b.dataset.period);
+        if (state.period === "custom") {
+          const t = todayParts().text;
+          $("from").value = state.from || t;
+          $("to").value = state.to || t;
+          return; // 按「套用」才查詢
+        }
+        const r = periodRange(state.period);
+        state.from = r.from; state.to = r.to;
+        load(true);
+      });
+    });
+
+    $("apply").addEventListener("click", function () {
+      const f = $("from").value, t = $("to").value;
+      if (!f || !t) return;
+      state.from = f <= t ? f : t;
+      state.to = f <= t ? t : f;
+      load(true);
+    });
+  }
+
+  function setupPage(boot) {
+    const events = boot.events || [];
+    $("event").innerHTML = '<option value="">全部活動</option>' + events.map(function (ev) {
+      const range = shortDate(ev.start_date) + "～" + shortDate(ev.end_date);
+      return '<option value="' + escapeHtml(ev.event_id) + '">' + escapeHtml(ev.name) + "（" + range + "）</option>";
+    }).join("");
+    $("event").hidden = events.length === 0;
+    $("boot").hidden = true;
+    $("page").hidden = false;
+  }
+
+  async function main() {
+    if (!MOCK) {
+      try {
+        await liff.init({ liffId: CONFIG.LIFF_ID });
+      } catch (e) {
+        showFatal("LIFF 初始化失敗，請確認從 LINE 開啟");
+        return;
+      }
+      if (!liff.isLoggedIn()) {
+        liff.login({ redirectUri: location.href });
+        return;
+      }
+    }
+
+    // bootstrap 與第一頁日記同時送出
+    const firstPage = load(true);
+
+    let boot;
+    try {
+      boot = await callApi("diary_bootstrap");
+    } catch (e) {
+      showFatal("連線失敗，請稍後再試");
+      return;
+    }
+    if (!boot.ok) {
+      if (handleAuthError(boot)) return;
+      showFatal((boot.error && boot.error.message) || "發生錯誤");
+      return;
+    }
+    try { sessionStorage.removeItem("liff_relogin"); } catch (e) { /* 忽略 */ }
+
+    setupPage(boot.data);
+    bindFilters();
+    await firstPage;
+    bindExpand($("list"));
+  }
+
+  // ---------- 假資料（?mock=1） ----------
+
+  function mockApi(action, params) {
+    const wait = function (data) {
+      return new Promise(function (resolve) { setTimeout(function () { resolve({ ok: true, data: data }); }, 300); });
+    };
+    if (action === "diary_bootstrap") {
+      return wait({
+        user: { user_id: "soso", alias: "老公" },
+        events: [
+          { event_id: "EV1", name: "日本旅行", start_date: "2026-11-18", end_date: "", status: "active" },
+          { event_id: "EV2", name: "露營", start_date: "2026-10-03", end_date: "2026-10-04", status: "ended" }
+        ]
+      });
+    }
+    const long = "早上搭電車去淺草寺，人超多。\n仲見世通買了人形燒和炸肉餅，邊走邊吃。\n中午排了一小時的拉麵，湯頭很濃，小孩一直說好吃。\n下午去晴空塔，天氣很好看得到富士山。\n晚上回飯店泡湯。\n明天要去迪士尼，早點睡。\n記得帶行動電源。\n今天走了兩萬步。\n腳好痠。";
+    let all = [];
+    for (let i = 0; i < 26; i++) {
+      const day = 21 - Math.floor(i / 2);
+      const date = "2026-11-" + String(day).padStart(2, "0");
+      all.push({
+        date: date,
+        author: i % 2 ? "老婆" : "老公",
+        scope: i % 5 === 3 ? "personal" : "family",
+        event: day >= 18 ? { name: "日本旅行", day: day - 17 } : null,
+        event_id: day >= 18 ? "EV1" : "",
+        content: i === 0 ? long : (i % 3 === 0 ? "晚餐吃拉麵，第 " + i + " 篇" : "今天在家整理房間，第 " + i + " 篇"),
+        summary: "",
+        tags: i === 0 ? ["淺草寺", "拉麵", "晴空塔"] : (i % 3 === 0 ? ["美食"] : []),
+        transactions: i === 0
+          ? [{ note: "拉麵", category: "餐飲 / 正餐 / 午餐", amount: 252, currency: "JPY", original_amount: 1200, income: false },
+             { note: "人形燒", category: "餐飲 / 點心", amount: 105, currency: "JPY", original_amount: 500, income: false },
+             { note: "電車", category: "交通", amount: 0, amount_missing: true, currency: "JPY", original_amount: 340, income: false }]
+          : []
+      });
+    }
+    if (params.eventId) all = all.filter(function (d) { return d.event_id === params.eventId; });
+    if (params.from) all = all.filter(function (d) { return d.date >= params.from && d.date <= params.to; });
+    if (params.q) {
+      const k = params.q.toLowerCase();
+      all = all.filter(function (d) { return (d.content + d.tags.join(",")).toLowerCase().indexOf(k) >= 0; });
+    }
+    const page = all.slice(params.offset, params.offset + params.limit);
+    const totals = {};
+    page.forEach(function (d) { totals[d.date] = 1200 + Number(d.date.slice(8)) * 37; });
+    return wait({ items: page, day_totals: totals, total: all.length, offset: params.offset, hasMore: params.offset + page.length < all.length });
+  }
+
+  main();
+</script>
+</body>
+</html>
