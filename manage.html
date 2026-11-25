@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>記帳管理</title>
+<!--
+  LIFF 記帳管理頁（ADR 0018）：交易編輯（之後加入交易列表、多筆修改、核銷）。
+  網址參數 view 決定畫面：view=edit&id=TXN_…（單筆編輯）。
+
+  這個檔案會公開在 GitHub Pages，只能放「不是祕密」的設定：
+  - LIFF_ID：記帳管理頁自己的 LIFF app ID（和統計頁、日記頁不同）
+  - API_URL：GAS Web App 網址（https://script.google.com/macros/s/…/exec），
+    不能帶 ?token=…（那是 LINE Webhook 的密鑰）
+  不可以放：試算表 ID、Gemini 金鑰、Channel secret、Channel access token、WEBHOOK_TOKEN。
+
+  讀取用 GET（?action=…&idToken=…），寫入用 POST（?api=liff，內容是 text/plain 的 JSON），
+  都不加自訂 header，避免 CORS 預檢。
+  網址加 ?mock=1 會用假資料顯示畫面（不登入、不呼叫 API）。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --text: #0b0b0b;
+    --text-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --border: rgba(11, 11, 11, 0.10);
+    --accent: #06c755;
+    --accent-ink: #ffffff;
+    --danger: #d03b3b;
+    --danger-ink: #ffffff;
+    --chip: #f0efec;
+    --ok-bg: #e7f7ee;
+    --warn-bg: #fdf1e3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --text: #f0efec;
+      --text-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --border: rgba(255, 255, 255, 0.10);
+      --accent: #2bd46f;
+      --accent-ink: #0b0b0b;
+      --danger: #e66767;
+      --danger-ink: #0b0b0b;
+      --chip: #262624;
+      --ok-bg: #13301f;
+      --warn-bg: #33250f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-tap-highlight-color: transparent;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 16px 120px; }
+  h1 { font-size: 18px; margin: 4px 0 12px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+  .muted { color: var(--muted); font-size: 13px; }
+  .error { color: var(--danger); }
+  .field { margin-bottom: 14px; }
+  .field:last-child { margin-bottom: 0; }
+  .field > label, .field > .label { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 4px; }
+  .field .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  input, select, textarea {
+    font: inherit; font-size: 16px; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; width: 100%; min-width: 0;
+  }
+  textarea { resize: vertical; min-height: 64px; }
+  input.changed, select.changed, textarea.changed { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .cats { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .seg { display: flex; gap: 6px; }
+  .seg button {
+    flex: 1; font: inherit; font-size: 15px; border: 1px solid var(--border); background: var(--chip); color: var(--text-2);
+    padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .btn {
+    font: inherit; font-size: 16px; border: none; border-radius: 10px;
+    background: var(--accent); color: var(--accent-ink); padding: 11px 16px; cursor: pointer;
+  }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.plain { background: var(--chip); color: var(--text); }
+  .btn.danger { background: var(--danger); color: var(--danger-ink); }
+  .btn.link { background: none; color: var(--danger); padding: 8px 0; font-size: 15px; }
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    background: var(--page); border-top: 1px solid var(--border);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  }
+  .bar .inner { max-width: 560px; margin: 0 auto; display: flex; gap: 8px; align-items: center; }
+  .bar .inner .btn { flex: 1; }
+  .bar .count { flex: 1; font-size: 14px; color: var(--text-2); }
+  .notice { border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; white-space: pre-wrap; }
+  .notice.ok { background: var(--ok-bg); }
+  .notice.warn { background: var(--warn-bg); }
+  .notice.err { background: var(--warn-bg); color: var(--danger); }
+  .changes { margin: 4px 0 0; padding-left: 18px; }
+  .skeleton { height: 16px; border-radius: 6px; background: var(--grid); margin: 8px 0; animation: pulse 1.2s infinite ease-in-out; }
+  @keyframes pulse { 50% { opacity: .5; } }
+  dialog {
+    border: none; border-radius: 14px; padding: 18px; max-width: 360px; width: calc(100% - 32px);
+    background: var(--surface); color: var(--text);
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .45); }
+  dialog .actions { display: flex; gap: 8px; margin-top: 16px; }
+  dialog .actions .btn { flex: 1; }
+  .version { text-align: center; color: var(--muted); font-size: 12px; margin: 8px 0 24px; }
+</style>
+</head>
+<body>
+<main>
+  <div id="boot" class="card">
+    <div class="skeleton" style="width:40%"></div>
+    <div class="skeleton" style="width:70%"></div>
+    <div class="skeleton" style="width:55%"></div>
+  </div>
+
+  <!-- 單筆編輯 -->
+  <section id="editView" hidden>
+    <h1>修改交易</h1>
+    <div id="editNotice"></div>
+    <form id="editForm" autocomplete="off" novalidate>
+      <div class="card">
+        <div class="field">
+          <label for="fDate">日期</label>
+          <input type="date" id="fDate" required>
+        </div>
+        <div class="field">
+          <label for="fAmount" id="fAmountLabel">金額</label>
+          <input type="text" id="fAmount" inputmode="decimal" required>
+          <div class="hint" id="fAmountHint"></div>
+        </div>
+        <div class="field">
+          <label for="fNote">備註</label>
+          <textarea id="fNote" maxlength="500" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="card">
+        <div class="field">
+          <span class="label">分類</span>
+          <div class="cats">
+            <select id="fCatMain" aria-label="大分類"></select>
+            <select id="fCatMid" aria-label="中分類"></select>
+            <select id="fCatSub" aria-label="小分類"></select>
+          </div>
+          <div class="hint">只能選到最底層分類</div>
+        </div>
+        <div class="field">
+          <label for="fBook">帳本</label>
+          <select id="fBook"></select>
+        </div>
+        <div class="field">
+          <label for="fPayer">付款人</label>
+          <select id="fPayer"></select>
+        </div>
+        <div class="field">
+          <label for="fEvent">活動</label>
+          <select id="fEvent"></select>
+        </div>
+        <div class="field">
+          <span class="label">核銷狀態</span>
+          <div class="seg" role="group" aria-label="核銷狀態" id="fSettle">
+            <button type="button" data-value="未核銷" aria-pressed="true">未核銷</button>
+            <button type="button" data-value="已核銷" aria-pressed="false">已核銷</button>
+          </div>
+        </div>
+      </div>
+      <button type="button" class="btn link" id="deleteBtn">🗑 刪除這筆</button>
+    </form>
+  </section>
+
+  <!-- 完成畫面（刪除後） -->
+  <section id="doneView" hidden>
+    <div class="card">
+      <p id="doneText" style="margin:0 0 12px"></p>
+      <button type="button" class="btn plain" id="doneClose" style="width:100%">關閉</button>
+    </div>
+  </section>
+</main>
+
+<div class="bar" id="editBar" hidden>
+  <div class="inner">
+    <button type="button" class="btn plain" id="closeBtn">關閉</button>
+    <button type="button" class="btn" id="saveBtn" disabled>儲存</button>
+  </div>
+</div>
+
+<dialog id="confirmDialog">
+  <p id="confirmText" style="margin:0;white-space:pre-wrap"></p>
+  <div class="actions">
+    <button type="button" class="btn plain" id="confirmCancel">取消</button>
+    <button type="button" class="btn danger" id="confirmOk">確定</button>
+  </div>
+</dialog>
+
+<!-- 版本號：每次更新這個檔案都要改（寫死在 HTML，JS 出錯也看得到；手機上看到舊版號 = 還在用快取） -->
+<footer class="version">版本 2026-11-25 記帳管理（單筆編輯）</footer>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+  // ===== 設定區（只放公開資訊）=====
+  const CONFIG = {
+    LIFF_ID: "",  // 記帳管理頁自己的 LIFF ID（在 LINE Developers 建立後填入）
+    API_URL: "https://script.google.com/macros/s/AKfycbydOFXSiDdT5RAbLBGi97XF7U_zEtYxRRo4_FSWtsYkfHfO8mzaxpm1t_f8M1klsLiyuQ/exec"
+  };
+  // =================================
+
+  const QUERY = new URLSearchParams(location.search);
+  const MOCK = QUERY.get("mock") === "1";
+
+  const $ = function (id) { return document.getElementById(id); };
+
+  // ---------- 小工具 ----------
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function money(n) {
+    return "NT$" + Math.round(Number(n) || 0).toLocaleString("en-US");
+  }
+
+  function newRequestId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "");
+    return String(Date.now()) + Math.random().toString(36).slice(2, 12);
+  }
+
+  function option(value, label, selected) {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = label;
+    if (selected) o.selected = true;
+    return o;
+  }
+
+  function closeLiff() {
+    if (!MOCK && window.liff && liff.isInClient && liff.isInClient()) {
+      liff.closeWindow();
+    } else {
+      history.length > 1 ? history.back() : window.close();
+    }
+  }
+
+  // 確認視窗：回傳 Promise<boolean>
+  function confirmBox(text, okLabel) {
+    return new Promise(function (resolve) {
+      const dlg = $("confirmDialog");
+      $("confirmText").textContent = text;
+      $("confirmOk").textContent = okLabel || "確定";
+      function done(v) {
+        $("confirmOk").onclick = null;
+        $("confirmCancel").onclick = null;
+        dlg.close();
+        resolve(v);
+      }
+      $("confirmOk").onclick = function () { done(true); };
+      $("confirmCancel").onclick = function () { done(false); };
+      if (dlg.showModal) dlg.showModal(); else resolve(window.confirm(text));
+    });
+  }
+
+  // ---------- API ----------
+
+  async function apiGet(action, params) {
+    if (MOCK) return mockApi(action, params);
+    const idToken = liff.getIDToken();
+    if (!idToken) return { ok: false, error: { code: "AUTH_EXPIRED", message: "登入已過期" } };
+    const query = new URLSearchParams(Object.assign({ action: action, idToken: idToken }, params || {}));
+    const res = await fetch(CONFIG.API_URL + "?" + query.toString());
+    return res.json();
+  }
+
+  async function apiPost(action, body) {
+    if (MOCK) return mockApi(action, body);
+    const idToken = liff.getIDToken();
+    if (!idToken) return { ok: false, error: { code: "AUTH_EXPIRED", message: "登入已過期" } };
+    // 字串 body 預設是 text/plain，不會觸發 CORS 預檢
+    const res = await fetch(CONFIG.API_URL + "?api=liff", {
+      method: "POST",
+      body: JSON.stringify(Object.assign({ action: action, idToken: idToken }, body || {}))
+    });
+    return res.json();
+  }
+
+  function handleAuthError(result) {
+    const code = result && result.error && result.error.code;
+    if (code !== "AUTH_EXPIRED" && code !== "AUTH_INVALID") return false;
+    let tried = null;
+    try { tried = sessionStorage.getItem("liff_relogin"); } catch (e) { /* 忽略 */ }
+    if (tried === "1") {
+      showFatal("登入已過期，請關閉後從 LINE 重新開啟");
+      return true;
+    }
+    try { sessionStorage.setItem("liff_relogin", "1"); } catch (e) { /* 忽略 */ }
+    liff.logout();
+    liff.login({ redirectUri: location.href });
+    return true;
+  }
+
+  function showFatal(message) {
+    ["editView", "doneView"].forEach(function (id) { $(id).hidden = true; });
+    $("editBar").hidden = true;
+    $("boot").hidden = false;
+    $("boot").innerHTML = '<p class="error">' + escapeHtml(message) + '</p>' +
+      '<button class="btn plain" onclick="location.reload()">重新載入</button>';
+  }
+
+  function errorMessage(result) {
+    return (result && result.error && result.error.message) || "系統暫時無法處理，請稍後再試";
+  }
+
+  // ---------- 單筆編輯 ----------
+
+  const edit = {
+    tx: null,        // 伺服器上的目前值
+    options: null,
+    settle: "未核銷",
+    saving: false
+  };
+
+  function findCategory(id) {
+    const cats = edit.options.categories;
+    for (let i = 0; i < cats.length; i++) {
+      for (let j = 0; j < cats[i].mids.length; j++) {
+        const leaves = cats[i].mids[j].leaves;
+        for (let k = 0; k < leaves.length; k++) {
+          if (leaves[k].id === id) return { main: i, mid: j, leaf: k };
+        }
+      }
+    }
+    return null;
+  }
+
+  function fillCatMain(selectedMain) {
+    const sel = $("fCatMain");
+    sel.innerHTML = "";
+    sel.appendChild(option("", "請選擇大分類", selectedMain < 0));
+    edit.options.categories.forEach(function (c, i) {
+      sel.appendChild(option(String(i), c.name, i === selectedMain));
+    });
+  }
+
+  function fillCatMid(mainIdx, selectedMid) {
+    const sel = $("fCatMid");
+    sel.innerHTML = "";
+    if (mainIdx < 0) { sel.hidden = true; return; }
+    const mids = edit.options.categories[mainIdx].mids;
+    sel.hidden = false;
+    sel.appendChild(option("", "請選擇中分類", selectedMid < 0));
+    mids.forEach(function (m, j) { sel.appendChild(option(String(j), m.name, j === selectedMid)); });
+  }
+
+  function fillCatSub(mainIdx, midIdx, selectedLeaf) {
+    const sel = $("fCatSub");
+    sel.innerHTML = "";
+    if (mainIdx < 0 || midIdx < 0) { sel.hidden = true; return; }
+    const leaves = edit.options.categories[mainIdx].mids[midIdx].leaves;
+    // 中分類本身就是最底層（沒有小分類）
+    if (leaves.length === 1 && !leaves[0].name) { sel.hidden = true; return; }
+    sel.hidden = false;
+    sel.appendChild(option("", "請選擇小分類", selectedLeaf < 0));
+    leaves.forEach(function (l, k) { sel.appendChild(option(String(k), l.name, k === selectedLeaf)); });
+  }
+
+  // 目前選到的最底層 category_id（還沒選到最底層時回 ""）
+  function selectedCategoryId() {
+    const i = $("fCatMain").value === "" ? -1 : Number($("fCatMain").value);
+    const j = $("fCatMid").value === "" ? -1 : Number($("fCatMid").value);
+    if (i < 0 || j < 0) return "";
+    const leaves = edit.options.categories[i].mids[j].leaves;
+    if (leaves.length === 1 && !leaves[0].name) return leaves[0].id;
+    const k = $("fCatSub").value === "" ? -1 : Number($("fCatSub").value);
+    return k < 0 ? "" : leaves[k].id;
+  }
+
+  function setSettle(value) {
+    edit.settle = value;
+    Array.prototype.forEach.call($("fSettle").querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute("data-value") === value ? "true" : "false");
+    });
+  }
+
+  function renderEdit() {
+    const tx = edit.tx;
+    const opt = edit.options;
+
+    $("fDate").value = tx.date;
+
+    $("fAmountLabel").textContent = tx.currency ? "金額（" + tx.currency + "）" : "金額";
+    $("fAmount").value = tx.amount == null ? "" : String(tx.amount);
+    $("fAmountHint").textContent =
+      tx.currency
+        ? (tx.amount_twd == null ? "尚未換算台幣" : "約 " + money(tx.amount_twd) + "（修改後依這筆的匯率重算）")
+        : (tx.type === "income" ? "收入" : "");
+
+    $("fNote").value = tx.note;
+
+    const pos = tx.category_id ? findCategory(tx.category_id) : null;
+    fillCatMain(pos ? pos.main : -1);
+    fillCatMid(pos ? pos.main : -1, pos ? pos.mid : -1);
+    fillCatSub(pos ? pos.main : -1, pos ? pos.mid : -1, pos ? pos.leaf : -1);
+
+    const book = $("fBook");
+    book.innerHTML = "";
+    if (!tx.book_id) book.appendChild(option("", "（待選）請選擇帳本", true));
+    let bookFound = false;
+    opt.books.forEach(function (b) {
+      if (b.book_id === tx.book_id) bookFound = true;
+      book.appendChild(option(b.book_id, b.book_name, b.book_id === tx.book_id));
+    });
+    if (tx.book_id && !bookFound) book.appendChild(option(tx.book_id, tx.book_name || tx.book_id, true));
+
+    const payer = $("fPayer");
+    payer.innerHTML = "";
+    if (!tx.payer) payer.appendChild(option("", "（未指定）", true));
+    let payerFound = false;
+    opt.members.forEach(function (m) {
+      if (m.user_code === tx.payer) payerFound = true;
+      payer.appendChild(option(m.user_code, m.alias === m.user_code ? m.user_code : m.alias + "（" + m.user_code + "）", m.user_code === tx.payer));
+    });
+    if (tx.payer && !payerFound) payer.appendChild(option(tx.payer, tx.payer, true));
+
+    const ev = $("fEvent");
+    ev.innerHTML = "";
+    ev.appendChild(option("", "不屬於活動", !tx.activity_id));
+    opt.events.forEach(function (e) {
+      const period = e.start_date ? "（" + e.start_date.slice(5).replace("-", "/") + (e.end_date ? "～" + e.end_date.slice(5).replace("-", "/") : "～") + "）" : "";
+      ev.appendChild(option(e.event_id, e.name + period, e.event_id === tx.activity_id));
+    });
+
+    setSettle(tx.settlement_status);
+    refreshDirty();
+  }
+
+  // 只收集和伺服器目前值不同的欄位
+  function collectChanges() {
+    const tx = edit.tx;
+    const changes = {};
+
+    const date = $("fDate").value;
+    if (date && date !== tx.date) changes.date = date;
+
+    const amountText = $("fAmount").value.replace(/[,\s]/g, "");
+    if (amountText !== "" && Number(amountText) !== tx.amount) changes.amount = Number(amountText);
+
+    const note = $("fNote").value.trim();
+    if (note !== tx.note) changes.note = note;
+
+    const cat = selectedCategoryId();
+    if (cat && cat !== tx.category_id) changes.category_id = cat;
+
+    const book = $("fBook").value;
+    if (book && book !== tx.book_id) changes.book_id = book;
+
+    const payer = $("fPayer").value;
+    if (payer && payer !== tx.payer) changes.payer = payer;
+
+    const ev = $("fEvent").value;
+    if (ev !== tx.activity_id) changes.activity_id = ev;
+
+    if (edit.settle !== tx.settlement_status) changes.settlement_status = edit.settle;
+
+    return changes;
+  }
+
+  function validate() {
+    const amountText = $("fAmount").value.replace(/[,\s]/g, "");
+    if (!/^\d+(\.\d+)?$/.test(amountText) || Number(amountText) <= 0) return "金額要是大於 0 的數字";
+    if (!$("fDate").value) return "請選日期";
+    const i = $("fCatMain").value;
+    if (i !== "" && !selectedCategoryId()) return "分類要選到最底層";
+    return "";
+  }
+
+  function refreshDirty() {
+    const changes = collectChanges();
+    const map = { date: "fDate", amount: "fAmount", note: "fNote", book_id: "fBook", payer: "fPayer", activity_id: "fEvent" };
+    Object.keys(map).forEach(function (k) { $(map[k]).classList.toggle("changed", k in changes); });
+    ["fCatMain", "fCatMid", "fCatSub"].forEach(function (id) { $(id).classList.toggle("changed", "category_id" in changes); });
+    $("saveBtn").disabled = edit.saving || Object.keys(changes).length === 0;
+  }
+
+  function showEditNotice(kind, html) {
+    $("editNotice").innerHTML = html ? '<div class="notice ' + kind + '">' + html + "</div>" : "";
+    if (html) window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function loadEdit(id) {
+    const result = await apiGet("tx_get", { id: id });
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      showFatal(errorMessage(result));
+      return;
+    }
+    edit.tx = result.data.tx;
+    edit.options = result.data.options;
+    $("boot").hidden = true;
+    $("editView").hidden = false;
+    $("editBar").hidden = false;
+    renderEdit();
+  }
+
+  async function saveEdit() {
+    const err = validate();
+    if (err) { showEditNotice("err", escapeHtml(err)); return; }
+    const changes = collectChanges();
+    if (Object.keys(changes).length === 0) return;
+
+    edit.saving = true;
+    $("saveBtn").disabled = true;
+    $("saveBtn").textContent = "儲存中…";
+    try {
+      const result = await apiPost("tx_update", {
+        id: edit.tx.id,
+        expected_updated_at: edit.tx.updated_at,
+        changes: changes,
+        request_id: newRequestId()
+      });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        if (result.error.code === "CONFLICT") {
+          showEditNotice("warn", escapeHtml(errorMessage(result)) +
+            '<br><button type="button" class="btn plain" style="margin-top:8px" onclick="location.reload()">重新載入</button>');
+        } else {
+          showEditNotice("err", escapeHtml(errorMessage(result)));
+        }
+        return;
+      }
+      edit.tx = result.data.tx;
+      const changed = result.data.changed || [];
+      showEditNotice("ok", "✅ 已儲存" + (changed.length
+        ? '<ul class="changes">' + changed.map(function (c) {
+            return "<li>" + escapeHtml(c.label) + "：" + escapeHtml(c.before || "（空白）") + " → " + escapeHtml(c.after || "（空白）") + "</li>";
+          }).join("") + "</ul>"
+        : "（內容沒有變動）"));
+      renderEdit();
+    } catch (e) {
+      showEditNotice("err", "網路連線失敗，請稍後再試（這次可能沒有儲存）");
+    } finally {
+      edit.saving = false;
+      $("saveBtn").textContent = "儲存";
+      refreshDirty();
+    }
+  }
+
+  async function deleteEdit() {
+    const tx = edit.tx;
+    const ok = await confirmBox(
+      "確定要刪除這筆嗎？刪除後無法復原。\n\n" +
+      tx.date + "　" + (tx.note || tx.category_path) + "　" +
+      (tx.currency ? tx.currency + " " + tx.amount : money(tx.amount)),
+      "刪除"
+    );
+    if (!ok) return;
+    try {
+      const result = await apiPost("tx_delete", {
+        id: tx.id,
+        expected_updated_at: tx.updated_at,
+        request_id: newRequestId()
+      });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        showEditNotice(result.error.code === "CONFLICT" ? "warn" : "err", escapeHtml(errorMessage(result)));
+        return;
+      }
+      $("editView").hidden = true;
+      $("editBar").hidden = true;
+      $("doneText").textContent = "🗑 已刪除這筆交易。";
+      $("doneView").hidden = false;
+    } catch (e) {
+      showEditNotice("err", "網路連線失敗，請稍後再試");
+    }
+  }
+
+  function bindEdit() {
+    ["fDate", "fAmount", "fNote", "fBook", "fPayer", "fEvent"].forEach(function (id) {
+      $(id).addEventListener("input", refreshDirty);
+      $(id).addEventListener("change", refreshDirty);
+    });
+    $("fCatMain").addEventListener("change", function () {
+      const i = this.value === "" ? -1 : Number(this.value);
+      fillCatMid(i, -1);
+      fillCatSub(i, -1, -1);
+      refreshDirty();
+    });
+    $("fCatMid").addEventListener("change", function () {
+      const i = $("fCatMain").value === "" ? -1 : Number($("fCatMain").value);
+      const j = this.value === "" ? -1 : Number(this.value);
+      fillCatSub(i, j, -1);
+      refreshDirty();
+    });
+    $("fCatSub").addEventListener("change", refreshDirty);
+    $("fSettle").addEventListener("click", function (e) {
+      const b = e.target.closest("button");
+      if (!b) return;
+      setSettle(b.getAttribute("data-value"));
+      refreshDirty();
+    });
+    $("editForm").addEventListener("submit", function (e) { e.preventDefault(); saveEdit(); });
+    $("saveBtn").addEventListener("click", saveEdit);
+    $("closeBtn").addEventListener("click", closeLiff);
+    $("deleteBtn").addEventListener("click", deleteEdit);
+    $("doneClose").addEventListener("click", closeLiff);
+  }
+
+  // ---------- 假資料（?mock=1）----------
+
+  function mockApi(action, params) {
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        if (action === "tx_get") {
+          resolve({ ok: true, data: {
+            tx: { id: "TXN_MOCK", date: "2026-11-24", type: "expense", book_id: "B1", book_name: "家庭", category_id: "C2",
+                  category_path: "餐飲 / 正餐 / 午餐", currency: "", amount: 120, amount_twd: 120, payer: "soso",
+                  note: "[鼎泰豐] 午餐", item: "午餐", activity_id: "", settlement_status: "未核銷", settlement_date: "",
+                  updated_at: "2026-11-24 12:00:00.000" },
+            options: {
+              books: [{ book_id: "B1", book_name: "家庭", book_type: "family" }, { book_id: "B2", book_name: "soso 個人", book_type: "personal" }],
+              members: [{ user_code: "soso", alias: "老公" }, { user_code: "twotwo", alias: "老婆" }],
+              categories: [
+                { name: "餐飲", mids: [{ name: "正餐", leaves: [{ name: "早餐", id: "C1" }, { name: "午餐", id: "C2" }, { name: "晚餐", id: "C3" }] },
+                                       { name: "飲料", leaves: [{ name: "", id: "C4" }] }] },
+                { name: "交通", mids: [{ name: "大眾運輸", leaves: [{ name: "捷運", id: "C5" }, { name: "公車", id: "C6" }] },
+                                       { name: "計程車", leaves: [{ name: "", id: "C7" }] }] }
+              ],
+              events: [{ event_id: "EV1", name: "日本旅行", start_date: "2026-11-20", end_date: "2026-11-27", status: "active" }]
+            }
+          } });
+          return;
+        }
+        if (action === "tx_update") {
+          const tx = Object.assign({}, edit.tx, params.changes, { updated_at: new Date().toISOString() });
+          resolve({ ok: true, data: { tx: tx, changed: Object.keys(params.changes).map(function (k) {
+            return { label: k, before: String(edit.tx[k]), after: String(params.changes[k]) };
+          }) } });
+          return;
+        }
+        if (action === "tx_delete") { resolve({ ok: true, data: { deleted: 1 } }); return; }
+        resolve({ ok: false, error: { code: "BAD_PARAMS", message: "參數不正確" } });
+      }, 300);
+    });
+  }
+
+  // ---------- 啟動 ----------
+
+  async function start() {
+    bindEdit();
+    try {
+      if (!MOCK) {
+        if (!CONFIG.LIFF_ID) { showFatal("頁面還沒設定 LIFF ID"); return; }
+        await liff.init({ liffId: CONFIG.LIFF_ID });
+        if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+      }
+      try { sessionStorage.removeItem("liff_relogin"); } catch (e) { /* 忽略 */ }
+
+      // LIFF 會把額外的參數放在 liff.state，init 之後網址才是完整的
+      const q = new URLSearchParams(location.search);
+      const view = q.get("view") || "edit";
+      const id = q.get("id") || (MOCK ? "TXN_MOCK" : "");
+
+      if (view === "edit") {
+        if (!id) { showFatal("缺少要修改的交易"); return; }
+        await loadEdit(id);
+        return;
+      }
+      showFatal("這個功能還在準備中");
+    } catch (e) {
+      showFatal("頁面載入失敗，請關閉後重新開啟");
+    }
+  }
+
+  start();
+</script>
+</body>
+</html>
