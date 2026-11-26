@@ -9,6 +9,7 @@
   網址參數 view 決定畫面：
     view=list（預設）           交易列表；&ids=TXN_a,TXN_b 只列這幾筆並預先勾選
     view=edit&id=TXN_…         單筆編輯
+    view=settle（&from&to&payer）核銷（預設全部勾選）與核銷紀錄（ADR 0020）
   從列表點一筆會在同一頁開編輯，按「返回」回到列表。
 
   這個檔案會公開在 GitHub Pages，只能放「不是祕密」的設定：
@@ -168,6 +169,21 @@
   .more { width: 100%; margin-top: 4px; }
   .empty { text-align: center; padding: 32px 0; color: var(--muted); }
 
+  /* 核銷頁 */
+  .tabs { display: flex; gap: 6px; margin: 14px 0 0; }
+  .tabs button {
+    flex: 1; font: inherit; font-size: 15px; border: none; background: var(--chip); color: var(--text-2);
+    padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  }
+  .tabs button[aria-selected="true"] { background: var(--text); color: var(--page); font-weight: 600; }
+  .overview { margin-top: 12px; }
+  .overview .big { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .overview .lines { margin: 6px 0 0; padding: 0; list-style: none; font-size: 14px; color: var(--text-2); }
+  .overview .lines li { display: flex; justify-content: space-between; gap: 8px; }
+  .overview .debts { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--grid); }
+  .record { cursor: pointer; }
+  .record .top { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+  .record.cancelled { opacity: .6; }
   dialog {
     border: none; border-radius: 14px; padding: 18px; max-width: 420px; width: calc(100% - 32px);
     max-height: calc(100% - 48px); overflow: auto;
@@ -284,11 +300,61 @@
     </form>
   </section>
 
-  <!-- 完成畫面（刪除後） -->
+  <!-- 核銷 -->
+  <section id="settleView" hidden>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tabSettle" aria-selected="true">核銷</button>
+      <button type="button" role="tab" id="tabHistory" aria-selected="false">核銷紀錄</button>
+    </div>
+
+    <div id="settlePane">
+      <div class="filters">
+        <div class="row chips" role="group" aria-label="期間" id="settleChips">
+          <button type="button" data-period="all" aria-pressed="true">全部未核銷</button>
+          <button type="button" data-period="month" aria-pressed="false">本月</button>
+          <button type="button" data-period="lastMonth" aria-pressed="false">上月</button>
+          <button type="button" data-period="custom" aria-pressed="false">自訂</button>
+        </div>
+        <div class="row custom" id="settleCustom">
+          <input type="date" id="settleFrom" aria-label="開始日">
+          <span class="muted">～</span>
+          <input type="date" id="settleTo" aria-label="結束日">
+          <button type="button" class="btn small" id="settleApply">套用</button>
+        </div>
+        <div class="row">
+          <select id="settleBook" aria-label="帳本"></select>
+          <select id="settlePayer" aria-label="付款人"></select>
+        </div>
+      </div>
+      <div id="settleNotice"></div>
+      <div class="card overview" id="settleOverview"></div>
+      <div class="summary">
+        <span id="settleSummary" aria-live="polite"></span>
+        <button type="button" class="btn small plain" id="settleToggleAll">全不選</button>
+      </div>
+      <ul class="txlist" id="settleList"></ul>
+    </div>
+
+    <div id="historyPane" hidden>
+      <div id="historyNotice"></div>
+      <ul class="txlist" id="historyList"></ul>
+      <div id="historyDetail" hidden>
+        <button type="button" class="btn small plain" id="historyBack" style="margin:12px 0">← 核銷紀錄</button>
+        <div class="card" id="historyRecord"></div>
+        <ul class="txlist" id="historyItems"></ul>
+        <button type="button" class="btn danger" id="cancelSettlement" style="width:100%;margin-top:8px" hidden>取消這次核銷</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 完成畫面（刪除後、核銷後） -->
   <section id="doneView" hidden>
     <div class="card" style="margin-top:16px">
-      <p id="doneText" style="margin:0 0 12px"></p>
-      <button type="button" class="btn plain" id="doneClose" style="width:100%">關閉</button>
+      <p id="doneText" style="margin:0 0 12px;white-space:pre-wrap"></p>
+      <div class="row">
+        <button type="button" class="btn plain" id="doneClose" style="flex:1">關閉</button>
+        <button type="button" class="btn" id="doneBack" style="flex:1" hidden>繼續核銷</button>
+      </div>
     </div>
   </section>
 </main>
@@ -298,6 +364,13 @@
     <div class="count" id="selCount"><b>已選 0 筆</b></div>
     <button type="button" class="btn plain" id="batchDeleteBtn" disabled>刪除</button>
     <button type="button" class="btn" id="batchEditBtn" disabled>批次修改</button>
+  </div>
+</div>
+
+<div class="bar" id="settleBar" hidden>
+  <div class="inner">
+    <div class="count" id="settleCount"><b>已選 0 筆</b></div>
+    <button type="button" class="btn" id="settleExecBtn" disabled>確認核銷</button>
   </div>
 </div>
 
@@ -361,7 +434,7 @@
 </dialog>
 
 <!-- 版本號：每次更新這個檔案都要改（寫死在 HTML，JS 出錯也看得到；手機上看到舊版號 = 還在用快取） -->
-<footer class="version">版本 2026-11-26 記帳管理（列表、多筆修改）</footer>
+<footer class="version">版本 2026-11-26b 記帳管理（列表、多筆修改、核銷）</footer>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
@@ -510,9 +583,10 @@
   }
 
   function hideAllViews() {
-    ["listView", "editView", "doneView"].forEach(function (id) { $(id).hidden = true; });
+    ["listView", "editView", "doneView", "settleView"].forEach(function (id) { $(id).hidden = true; });
     $("listBar").hidden = true;
     $("editBar").hidden = true;
+    $("settleBar").hidden = true;
   }
 
   function showFatal(message) {
@@ -621,26 +695,32 @@
   // ---------- 畫面切換 ----------
 
   const nav = {
-    fromList: false   // 編輯頁是不是從列表點進去的（決定「關閉」或「返回」）
+    fromList: false,  // 編輯頁是不是從列表或核銷頁點進去的（決定「關閉」或「返回」）
+    returnView: ""    // "list" 或 "settle"
   };
 
   window.addEventListener("popstate", function () {
-    const q = new URLSearchParams(location.search);
-    if ((q.get("view") || "list") === "list" && nav.fromList) {
-      nav.fromList = false;
-      showList(true);
-    }
+    if (!nav.fromList) return;
+    const back = nav.returnView;
+    nav.fromList = false;
+    nav.returnView = "";
+    if (back === "settle") showSettle(true); else showList(true);
   });
 
-  function openEditFromList(id) {
+  function openEditFrom(view, id) {
     nav.fromList = true;
+    nav.returnView = view;
     history.pushState({ view: "edit" }, "", "?view=edit&id=" + encodeURIComponent(id) + (MOCK ? "&mock=1" : ""));
     showEdit(id);
   }
 
+  function openEditFromList(id) {
+    openEditFrom("list", id);
+  }
+
   function backToList() {
     if (nav.fromList) {
-      history.back();   // popstate → showList
+      history.back();   // popstate → 回到列表或核銷頁
     } else {
       closeLiff();
     }
@@ -1158,8 +1238,10 @@
     $("boot").hidden = false;
     $("boot").innerHTML = '<div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:70%"></div>';
     $("editNotice").innerHTML = "";
-    $("closeBtn").textContent = nav.fromList ? "返回列表" : "關閉";
-    $("doneClose").textContent = nav.fromList ? "返回列表" : "關閉";
+    const backLabel = nav.returnView === "settle" ? "返回核銷" : "返回列表";
+    $("closeBtn").textContent = nav.fromList ? backLabel : "關閉";
+    $("doneClose").textContent = nav.fromList ? backLabel : "關閉";
+    $("doneBack").hidden = true;
     let result;
     try {
       result = await apiGet("tx_get", { id: id });
@@ -1215,7 +1297,8 @@
             return "<li>" + escapeHtml(c.label) + "：" + escapeHtml(c.before || "（空白）") + " → " + escapeHtml(c.after || "（空白）") + "</li>";
           }).join("") + "</ul>"
         : "（內容沒有變動）"));
-      list.loaded = false;   // 回到列表時重新載入
+      list.loaded = false;   // 回到列表或核銷頁時重新載入
+      settle.loaded = false;
       renderEdit();
     } catch (e) {
       showEditNotice("err", "網路連線失敗，請稍後再試（這次可能沒有儲存）");
@@ -1247,6 +1330,7 @@
       }
       delete list.selected[tx.id];
       list.loaded = false;
+      settle.loaded = false;
       hideAllViews();
       $("doneText").textContent = "🗑 已刪除這筆交易。";
       $("doneView").hidden = false;
@@ -1272,6 +1356,384 @@
     $("closeBtn").addEventListener("click", backToList);
     $("deleteBtn").addEventListener("click", deleteEdit);
     $("doneClose").addEventListener("click", backToList);
+  }
+
+  // ---------- 核銷 ----------
+
+  const settle = {
+    options: null,
+    period: "all",
+    from: "", to: "",
+    items: [],
+    selected: {},     // id → item；載入後預設全選
+    summary: null,
+    maxExecute: 200,
+    seq: 0,
+    loaded: false,
+    executing: false,
+    detail: null      // 核銷紀錄明細 { record, items }
+  };
+
+  function settleParams() {
+    const p = {};
+    if (settle.from) p.from = settle.from;
+    if (settle.to) p.to = settle.to;
+    if ($("settleBook").value) p.bookId = $("settleBook").value;
+    if ($("settlePayer").value) p.payer = $("settlePayer").value;
+    return p;
+  }
+
+  function settleRangeLabel() {
+    if (!settle.from && !settle.to) return "全部未核銷";
+    return (settle.from || "最早").slice(5).replace("-", "/") + "～" + (settle.to || "今天").slice(5).replace("-", "/");
+  }
+
+  function fillSettleFilters(preset) {
+    const opt = settle.options;
+    const book = $("settleBook");
+    book.innerHTML = "";
+    book.appendChild(option("", "全部帳本", true));
+    opt.books.forEach(function (b) { book.appendChild(option(b.book_id, b.book_name)); });
+    const payer = $("settlePayer");
+    payer.innerHTML = "";
+    payer.appendChild(option("", "全部付款人", !preset.payer));
+    opt.members.forEach(function (m) { payer.appendChild(option(m.user_code, memberLabel(m), m.user_code === preset.payer)); });
+    payer.appendChild(option("__UNASSIGNED__", "未指定付款人", preset.payer === "__UNASSIGNED__"));
+  }
+
+  function renderSettleOverview() {
+    const s = settle.summary;
+    if (!s || !s.count) {
+      $("settleOverview").innerHTML = '<div class="muted">' + escapeHtml(settleRangeLabel()) + "</div><div class=\"big\">🎉 沒有未核銷的帳</div>";
+      return;
+    }
+    let html =
+      '<div class="muted">' + escapeHtml(settleRangeLabel()) + "・未核銷 " + s.count + " 筆</div>" +
+      '<div class="big">' + money(s.total_amount) + "</div>" +
+      '<ul class="lines">' + s.by_payer.map(function (p) {
+        return "<li><span>" + escapeHtml(p.label) + " 先墊（" + p.count + " 筆）</span><span>" + money(p.amount) + "</span></li>";
+      }).join("") + "</ul>";
+    if (s.debts && s.debts.length) {
+      html += '<ul class="lines debts">' + s.debts.map(function (d) {
+        return "<li><span>" + escapeHtml(d.from_label + " 應給 " + d.to_label) + "（" + d.count + " 筆）</span><span>" + money(d.amount) + "</span></li>";
+      }).join("") + "</ul>" +
+        '<div class="muted" style="margin-top:4px">依「算誰的帳」計算，各方向分開、不互相抵銷</div>';
+    }
+    $("settleOverview").innerHTML = html;
+  }
+
+  function settleRow(tx) {
+    const li = document.createElement("li");
+    const on = !!settle.selected[tx.id];
+    li.className = "tx" + (on ? " selected" : "");
+    const name = tx.note || tx.item || tx.category_path;
+    const subParts = [dateLabel(tx.date), tx.category_path, tx.payer_alias + " 付", tx.book_name];
+    if (tx.owner_label) subParts.push("算" + tx.owner_label + "的");
+    li.innerHTML =
+      '<label class="check"><input type="checkbox" aria-label="選取"' + (on ? " checked" : "") + "></label>" +
+      '<div class="body" role="button" tabindex="0">' +
+        '<div class="top"><span class="name">' + escapeHtml(name) + "</span>" +
+          '<span class="amt">' + escapeHtml(money(tx.amount_twd)) + "</span></div>" +
+        '<div class="sub">' + escapeHtml(subParts.join("・")) +
+          (tx.currency ? "・" + escapeHtml(amountText(tx)) : "") + "</div>" +
+      "</div>";
+    li.querySelector("input").addEventListener("change", function () {
+      if (this.checked) settle.selected[tx.id] = tx; else delete settle.selected[tx.id];
+      li.classList.toggle("selected", this.checked);
+      refreshSettleSelection();
+    });
+    li.querySelector(".body").addEventListener("click", function () { openEditFrom("settle", tx.id); });
+    return li;
+  }
+
+  function settleSelectedItems() {
+    return Object.keys(settle.selected).map(function (id) { return settle.selected[id]; });
+  }
+
+  function refreshSettleSelection() {
+    const items = settleSelectedItems();
+    const total = items.reduce(function (s, t) { return s + (Number(t.amount_twd) || 0); }, 0);
+    const over = items.length > settle.maxExecute;
+    $("settleCount").innerHTML = "<b>已選 " + items.length + " 筆</b><br>合計 " + money(total) +
+      (over ? '<br><span class="error">一次最多 ' + settle.maxExecute + " 筆</span>" : "");
+    $("settleExecBtn").disabled = settle.executing || items.length === 0 || over;
+    const allOn = settle.items.length > 0 && settle.items.every(function (t) { return settle.selected[t.id]; });
+    $("settleToggleAll").textContent = allOn ? "全不選" : "全選";
+    $("settleSummary").textContent = settle.items.length ? "勾選要核銷的項目（預設全選）" : "";
+  }
+
+  async function loadSettle() {
+    const seq = ++settle.seq;
+    $("settleList").innerHTML = '<li><div class="skeleton"></div><div class="skeleton" style="width:70%"></div></li>';
+    $("settleOverview").innerHTML = '<div class="skeleton" style="width:50%"></div>';
+    const params = settleParams();
+    if (!settle.options) params.withOptions = "1";
+    let result;
+    try {
+      result = await apiGet("settle_list", params);
+    } catch (e) {
+      if (seq !== settle.seq) return;
+      $("settleList").innerHTML = '<li class="empty error">網路連線失敗，請稍後再試</li>';
+      return;
+    }
+    if (seq !== settle.seq) return;
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      if (!settle.options) { showFatal(errorMessage(result)); return; }
+      $("settleList").innerHTML = '<li class="empty error">' + escapeHtml(errorMessage(result)) + "</li>";
+      return;
+    }
+    const data = result.data;
+    if (data.options) {
+      settle.options = data.options;
+      fillSettleFilters(settle.preset || {});
+    }
+    settle.items = data.items;
+    settle.summary = data.summary;
+    settle.maxExecute = data.max_execute || 200;
+    // 預設全部勾選
+    settle.selected = {};
+    data.items.forEach(function (t) { settle.selected[t.id] = t; });
+    $("settleList").innerHTML = "";
+    data.items.forEach(function (t) { $("settleList").appendChild(settleRow(t)); });
+    if (data.items.length === 0) $("settleList").innerHTML = '<li class="empty">沒有要核銷的項目</li>';
+    if (data.truncated) {
+      $("settleNotice").innerHTML = noticeHtml("warn", "項目太多，只列出最新的 " + data.items.length + " 筆，請縮小期間或選帳本、付款人。");
+    }
+    renderSettleOverview();
+    refreshSettleSelection();
+    settle.loaded = true;
+  }
+
+  function showSettle(reload) {
+    hideAllViews();
+    $("boot").hidden = true;
+    $("settleView").hidden = false;
+    showSettleTab("settle");
+    if (reload || !settle.loaded) loadSettle();
+  }
+
+  function showSettleTab(tab) {
+    $("tabSettle").setAttribute("aria-selected", tab === "settle" ? "true" : "false");
+    $("tabHistory").setAttribute("aria-selected", tab === "history" ? "true" : "false");
+    $("settlePane").hidden = tab !== "settle";
+    $("historyPane").hidden = tab !== "history";
+    $("settleBar").hidden = tab !== "settle";
+    if (tab === "history") loadHistory();
+  }
+
+  function setSettlePeriod(period) {
+    settle.period = period;
+    Array.prototype.forEach.call($("settleChips").querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute("data-period") === period ? "true" : "false");
+    });
+    $("settleCustom").classList.toggle("show", period === "custom");
+    if (period === "custom") return;
+    const r = periodRange(period);   // all → 都空白
+    settle.from = r.from; settle.to = r.to;
+    $("settleNotice").innerHTML = "";
+    loadSettle();
+  }
+
+  async function executeSettle() {
+    const items = settleSelectedItems();
+    if (items.length === 0) return;
+    const total = items.reduce(function (s, t) { return s + (Number(t.amount_twd) || 0); }, 0);
+    const bookSel = $("settleBook"), payerSel = $("settlePayer");
+    const cond = [
+      settleRangeLabel(),
+      bookSel.value ? bookSel.options[bookSel.selectedIndex].text : "全部帳本",
+      payerSel.value ? payerSel.options[payerSel.selectedIndex].text + " 付的" : "全部付款人"
+    ].join("、");
+    const ok = await confirmBox(
+      "確定要核銷嗎？\n\n" + items.length + " 筆，合計 " + money(total) + "\n條件：" + cond +
+      (items.length < settle.items.length ? "\n（有 " + (settle.items.length - items.length) + " 筆沒勾，不會核銷）" : ""),
+      "確認核銷"
+    );
+    if (!ok) return;
+    settle.executing = true;
+    refreshSettleSelection();
+    $("settleNotice").innerHTML = noticeHtml("ok", "核銷中…");
+    try {
+      const result = await apiPost("settle_execute", Object.assign(settleParams(), {
+        ids: items.map(function (t) { return t.id; }),
+        request_id: newRequestId()
+      }));
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        $("settleNotice").innerHTML = noticeHtml("err", escapeHtml(errorMessage(result) + "（這次沒有核銷）"));
+        return;
+      }
+      const d = result.data;
+      let text = "✅ 已核銷 " + d.count + " 筆，共 " + money(d.total_amount) + "（" + settleRangeLabel() + "）";
+      if (d.skipped && d.skipped.length) {
+        text += "\n\n⚠️ 有 " + d.skipped.length + " 筆沒有核銷：\n" +
+          d.skipped.map(function (s) { return "・" + s.label + "（" + s.reason + "）"; }).join("\n");
+      }
+      settle.loaded = false;
+      list.loaded = false;
+      hideAllViews();
+      $("doneText").textContent = text;
+      $("doneClose").textContent = "關閉";
+      $("doneBack").hidden = false;
+      $("doneView").hidden = false;
+      $("settleNotice").innerHTML = "";
+    } catch (e) {
+      $("settleNotice").innerHTML = noticeHtml("err", "網路連線失敗，請重新載入確認是否已核銷");
+    } finally {
+      settle.executing = false;
+      refreshSettleSelection();
+    }
+  }
+
+  // ---------- 核銷紀錄 ----------
+
+  function statusLabel(r) {
+    if (r.status === "cancelled") return "已取消" + (r.cancelled_by ? "（" + r.cancelled_by + "）" : "");
+    if (r.current_count < r.count && r.current_count >= 0) return "部分取消或看不到";
+    return "";
+  }
+
+  async function loadHistory() {
+    $("historyDetail").hidden = true;
+    $("historyList").hidden = false;
+    $("historyNotice").innerHTML = "";
+    $("historyList").innerHTML = '<li><div class="skeleton"></div><div class="skeleton" style="width:70%"></div></li>';
+    let result;
+    try {
+      result = await apiGet("settle_history", {});
+    } catch (e) {
+      $("historyList").innerHTML = '<li class="empty error">網路連線失敗，請稍後再試</li>';
+      return;
+    }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      $("historyList").innerHTML = '<li class="empty error">' + escapeHtml(errorMessage(result)) + "</li>";
+      return;
+    }
+    const records = result.data.records;
+    $("historyList").innerHTML = "";
+    if (records.length === 0) {
+      $("historyList").innerHTML = '<li class="empty">還沒有核銷紀錄（這次更新之前的核銷不會列出）</li>';
+      return;
+    }
+    records.forEach(function (r) {
+      const li = document.createElement("li");
+      li.className = "card record" + (r.status === "cancelled" ? " cancelled" : "");
+      const st = statusLabel(r);
+      li.innerHTML =
+        '<div class="top"><span>' + escapeHtml(r.settled_at.slice(0, 16)) + "</span><span>" + escapeHtml(money(r.total_amount)) + "</span></div>" +
+        '<div class="sub muted">' + escapeHtml(r.settled_by + " 核銷・" + r.count + " 筆" + (st ? "・" + st : "")) + "</div>" +
+        (r.summary ? '<div class="sub muted">' + escapeHtml(r.summary) + "</div>" : "");
+      li.addEventListener("click", function () { loadHistoryDetail(r.settlement_id); });
+      $("historyList").appendChild(li);
+    });
+  }
+
+  async function loadHistoryDetail(id, keepNotice) {
+    $("historyList").hidden = true;
+    $("historyDetail").hidden = false;
+    if (!keepNotice) $("historyNotice").innerHTML = "";
+    $("historyRecord").innerHTML = '<div class="skeleton"></div>';
+    $("historyItems").innerHTML = "";
+    $("cancelSettlement").hidden = true;
+    let result;
+    try {
+      result = await apiGet("settle_detail", { settlement_id: id });
+    } catch (e) {
+      $("historyRecord").innerHTML = '<p class="error">網路連線失敗，請稍後再試</p>';
+      return;
+    }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      $("historyRecord").innerHTML = '<p class="error">' + escapeHtml(errorMessage(result)) + "</p>";
+      return;
+    }
+    settle.detail = result.data;
+    const r = result.data.record;
+    const st = statusLabel(r);
+    $("historyRecord").innerHTML =
+      '<div class="muted">' + escapeHtml(r.settled_at + "・" + r.settled_by + " 核銷") + "</div>" +
+      '<div class="big" style="font-size:20px;font-weight:700">' + escapeHtml(r.count + " 筆，" + money(r.total_amount)) + "</div>" +
+      (r.summary ? '<div class="muted">' + escapeHtml(r.summary) + "</div>" : "") +
+      (st ? '<div class="muted">' + escapeHtml(st) + "</div>" : "");
+    const items = result.data.items;
+    if (items.length === 0) {
+      $("historyItems").innerHTML = '<li class="empty">這次核銷目前沒有你能修改的交易（已取消或在你看不到的帳本）</li>';
+    }
+    items.forEach(function (tx) {
+      const li = document.createElement("li");
+      li.className = "tx";
+      li.innerHTML =
+        '<div class="body"><div class="top"><span class="name">' + escapeHtml(tx.note || tx.item || tx.category_path) + "</span>" +
+        '<span class="amt">' + escapeHtml(money(tx.amount_twd)) + "</span></div>" +
+        '<div class="sub">' + escapeHtml([dateLabel(tx.date), tx.category_path, tx.payer_alias + " 付", tx.book_name].join("・")) + "</div></div>";
+      $("historyItems").appendChild(li);
+    });
+    $("cancelSettlement").hidden = !(r.status !== "cancelled" && items.length > 0);
+  }
+
+  async function cancelSettlement() {
+    const d = settle.detail;
+    if (!d || !d.items.length) return;
+    const total = d.items.reduce(function (s, t) { return s + (Number(t.amount_twd) || 0); }, 0);
+    const ok = await confirmBox(
+      "確定要取消這次核銷嗎？\n\n" + d.items.length + " 筆（" + money(total) + "）會改回未核銷。",
+      "取消核銷", true
+    );
+    if (!ok) return;
+    try {
+      const result = await apiPost("settle_cancel", {
+        settlement_id: d.record.settlement_id,
+        items: d.items.map(function (t) { return { id: t.id, expected_updated_at: t.updated_at }; }),
+        request_id: newRequestId()
+      });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        $("historyNotice").innerHTML = noticeHtml(result.error.code === "CONFLICT" ? "warn" : "err",
+          escapeHtml(errorMessage(result) + "（這次沒有取消任何一筆）"));
+        loadHistoryDetail(d.record.settlement_id, true);
+        return;
+      }
+      settle.loaded = false;
+      list.loaded = false;
+      $("historyNotice").innerHTML = noticeHtml("ok", escapeHtml("↩️ 已把 " + result.data.cancelled + " 筆改回未核銷"));
+      loadHistoryDetail(d.record.settlement_id, true);
+    } catch (e) {
+      $("historyNotice").innerHTML = noticeHtml("err", "網路連線失敗，請重新載入確認是否已取消");
+    }
+  }
+
+  function bindSettle() {
+    $("tabSettle").addEventListener("click", function () { showSettleTab("settle"); if (!settle.loaded) loadSettle(); });
+    $("tabHistory").addEventListener("click", function () { showSettleTab("history"); });
+    $("settleChips").addEventListener("click", function (e) {
+      const b = e.target.closest("button");
+      if (b) setSettlePeriod(b.getAttribute("data-period"));
+    });
+    $("settleApply").addEventListener("click", function () {
+      const f = $("settleFrom").value, t = $("settleTo").value;
+      if (!f || !t || f > t) { $("settleNotice").innerHTML = noticeHtml("err", "請選開始日與結束日（開始日不能晚於結束日）"); return; }
+      $("settleNotice").innerHTML = "";
+      settle.from = f; settle.to = t;
+      loadSettle();
+    });
+    ["settleBook", "settlePayer"].forEach(function (id) {
+      $(id).addEventListener("change", function () { $("settleNotice").innerHTML = ""; loadSettle(); });
+    });
+    $("settleToggleAll").addEventListener("click", function () {
+      const allOn = settle.items.length > 0 && settle.items.every(function (t) { return settle.selected[t.id]; });
+      settle.items.forEach(function (t) { if (allOn) delete settle.selected[t.id]; else settle.selected[t.id] = t; });
+      Array.prototype.forEach.call($("settleList").querySelectorAll(".tx"), function (li) {
+        li.classList.toggle("selected", !allOn);
+        li.querySelector("input").checked = !allOn;
+      });
+      refreshSettleSelection();
+    });
+    $("settleExecBtn").addEventListener("click", executeSettle);
+    $("historyBack").addEventListener("click", loadHistory);
+    $("cancelSettlement").addEventListener("click", cancelSettlement);
+    $("doneBack").addEventListener("click", function () { showSettle(true); });
   }
 
   // ---------- 假資料（?mock=1）----------
@@ -1325,6 +1787,36 @@
           }) } });
           return;
         }
+        if (action === "settle_list") {
+          let items = MOCK_TXS.filter(function (t) { return t.type !== "income" && t.settlement_status === "未核銷"; })
+            .map(function (t) { return Object.assign({}, t, { owner_label: "家庭" }); });
+          if (params.payer) items = items.filter(function (t) { return t.payer === params.payer; });
+          const total = items.reduce(function (s, t) { return s + t.amount_twd; }, 0);
+          const data = { items: items, truncated: false, max_execute: 200, summary: { count: items.length, total_amount: total,
+            by_payer: [{ payer: "soso", label: "老公", count: items.length, amount: total }],
+            debts: [{ from_label: "家庭", to_label: "老公", count: items.length, amount: total }] } };
+          if (params.withOptions) data.options = { books: MOCK_OPTIONS.books, members: MOCK_OPTIONS.members };
+          resolve({ ok: true, data: data });
+          return;
+        }
+        if (action === "settle_execute") {
+          resolve({ ok: true, data: { count: params.ids.length - 1, total_amount: 120, settlement_id: "STL_1", settlement_date: "2026-11-26",
+            skipped: [{ id: params.ids[params.ids.length - 1], label: "2026-11-22 拉麵 $252", reason: "已經被核銷了" }] } });
+          return;
+        }
+        if (action === "settle_history") {
+          resolve({ ok: true, data: { records: [
+            { settlement_id: "STL_1", settled_by: "老公", settled_at: "2026-11-26 10:00:00", count: 3, total_amount: 407, summary: "LIFF，全部未核銷，全部帳本，全部付款人", status: "active", current_count: 3 },
+            { settlement_id: "STL_0", settled_by: "老婆", settled_at: "2026-11-01 09:00:00", count: 2, total_amount: 300, summary: "聊天室：2026-10-01～2026-10-31", status: "cancelled", cancelled_by: "老公", current_count: 0 }
+          ] } });
+          return;
+        }
+        if (action === "settle_detail") {
+          resolve({ ok: true, data: { record: { settlement_id: params.settlement_id, settled_by: "老公", settled_at: "2026-11-26 10:00:00", count: 2, total_amount: 155, summary: "LIFF", status: "active", current_count: 2 },
+            items: MOCK_TXS.slice(0, 2) } });
+          return;
+        }
+        if (action === "settle_cancel") { resolve({ ok: true, data: { cancelled: params.items.length, remaining: 0 } }); return; }
         if (action === "tx_batch_update") { resolve({ ok: true, data: { updated: params.items.length, items: [] } }); return; }
         if (action === "tx_delete" || action === "tx_batch_delete") {
           resolve({ ok: true, data: { deleted: params.items ? params.items.length : 1 } });
@@ -1340,6 +1832,7 @@
   async function start() {
     bindList();
     bindEdit();
+    bindSettle();
     try {
       if (!MOCK) {
         if (!CONFIG.LIFF_ID) { showFatal("頁面還沒設定 LIFF ID"); return; }
@@ -1371,6 +1864,23 @@
           ids.split(",").filter(Boolean).forEach(function (id) { list.selected[id] = { id: id, pending: true }; });
         }
         showList(true);
+        return;
+      }
+
+      if (view === "settle") {
+        // 聊天室「核銷 10月」「核銷 老婆」帶進來的預設條件
+        const from = q.get("from") || "", to = q.get("to") || "";
+        settle.preset = { payer: q.get("payer") || "" };
+        if (from || to) {
+          settle.from = from; settle.to = to;
+          settle.period = "custom";
+          Array.prototype.forEach.call($("settleChips").querySelectorAll("button"), function (b) {
+            b.setAttribute("aria-pressed", b.getAttribute("data-period") === "custom" ? "true" : "false");
+          });
+          $("settleCustom").classList.add("show");
+          $("settleFrom").value = from; $("settleTo").value = to;
+        }
+        showSettle(true);
         return;
       }
 
