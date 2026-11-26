@@ -195,6 +195,24 @@
   dialog .actions { display: flex; gap: 8px; margin-top: 16px; }
   dialog .actions .btn { flex: 1; }
   .version { text-align: center; color: var(--muted); font-size: 12px; margin: 8px 0 24px; }
+
+  /* 處理中遮罩（寫入時） */
+  .busy {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0, 0, 0, .35);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  }
+  .busy .box {
+    background: var(--surface); color: var(--text); border-radius: 14px;
+    padding: 18px 22px; display: flex; align-items: center; gap: 12px; font-size: 15px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .25);
+  }
+  .spinner {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 3px solid var(--grid); border-top-color: var(--accent);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -388,9 +406,66 @@
 
   <!-- 活動列表（ADR 0022） -->
   <section id="eventsView" hidden>
-    <h1>活動</h1>
+    <div class="row" style="justify-content:space-between;margin-top:16px">
+      <h1 style="margin:0">活動</h1>
+      <button type="button" class="btn small" id="evNewBtn">＋ 新增活動</button>
+    </div>
     <div id="eventsNotice"></div>
     <div id="eventsList"></div>
+  </section>
+
+  <!-- 新增活動 -->
+  <section id="eventNewView" hidden>
+    <h1>新增活動</h1>
+    <div id="eventNewNotice"></div>
+    <div class="card">
+      <div class="field">
+        <span class="label">範圍</span>
+        <div class="seg" id="nScope">
+          <button type="button" data-value="family" aria-pressed="true">👪 家庭活動</button>
+          <button type="button" data-value="personal" aria-pressed="false">🙋 個人活動</button>
+        </div>
+        <div class="hint" id="nScopeHint"></div>
+      </div>
+      <div class="field">
+        <label for="nName">名稱</label>
+        <input type="text" id="nName" maxlength="30" placeholder="例如：日本旅行">
+      </div>
+      <div class="field">
+        <label for="nType">類型</label>
+        <select id="nType"></select>
+      </div>
+      <div class="field">
+        <label for="nAliases">別名（選填）</label>
+        <input type="text" id="nAliases" placeholder="用逗號或空白分開，例如：日本、東京行">
+      </div>
+      <div class="row top">
+        <div class="field" style="flex:1">
+          <label for="nStart">開始日</label>
+          <input type="date" id="nStart">
+        </div>
+        <div class="field" style="flex:1">
+          <label for="nEnd">結束日（選填）</label>
+          <input type="date" id="nEnd">
+        </div>
+      </div>
+      <div class="field" id="nMembersWrap">
+        <span class="label">參加者</span>
+        <div id="nMembers" class="chips"></div>
+        <div class="hint">只有參加者記的帳，在活動期間會自動掛上這個活動</div>
+      </div>
+      <div class="row top">
+        <div class="field" style="flex:1">
+          <label for="nCurrency">主要貨幣</label>
+          <select id="nCurrency"></select>
+        </div>
+        <div class="field" style="flex:1" id="nRateWrap">
+          <label for="nRate">自訂匯率</label>
+          <input type="text" id="nRate" inputmode="decimal" placeholder="自動">
+        </div>
+      </div>
+      <div class="hint" id="nCurrencyHint">旅行到國外時選當地貨幣：參加者沒寫幣別的帳會當成這個貨幣</div>
+    </div>
   </section>
 
   <!-- 活動詳細 -->
@@ -450,6 +525,51 @@
       </div>
       <button type="button" class="btn link" id="evCancelBtn">🗑 取消這個活動</button>
     </div>
+
+    <div class="tabs" role="tablist" id="evTabs">
+      <button type="button" role="tab" data-tab="overview" aria-selected="true">總覽</button>
+      <button type="button" role="tab" data-tab="txs" aria-selected="false">花費</button>
+      <button type="button" role="tab" data-tab="tag" aria-selected="false">補標記</button>
+      <button type="button" role="tab" data-tab="diaries" aria-selected="false">日記</button>
+    </div>
+    <div id="evTabNotice"></div>
+
+    <div id="evPaneOverview" class="card overview"></div>
+
+    <div id="evPaneTxs" hidden>
+      <div class="summary">
+        <span id="evTxSummary"></span>
+        <button type="button" class="btn small plain" id="evTxDetach" disabled>移出活動</button>
+      </div>
+      <ul class="txlist" id="evTxList"></ul>
+    </div>
+
+    <div id="evPaneTag" hidden>
+      <div class="card">
+        <div class="row top">
+          <div class="field" style="flex:1"><label for="tagFrom">從</label><input type="date" id="tagFrom"></div>
+          <div class="field" style="flex:1"><label for="tagTo">到</label><input type="date" id="tagTo"></div>
+        </div>
+        <div class="row">
+          <input type="search" id="tagQ" placeholder="關鍵字（例如：機票 住宿），會往前找 180 天">
+          <button type="button" class="btn small" id="tagSearch">查詢</button>
+        </div>
+      </div>
+      <div class="summary">
+        <span id="tagSummary"></span>
+        <button type="button" class="btn small plain" id="tagToggleAll">全不選</button>
+      </div>
+      <ul class="txlist" id="tagList"></ul>
+      <div id="tagDiaryWrap" hidden>
+        <div class="summary"><span>沒掛活動的日記</span></div>
+        <ul class="txlist" id="tagDiaryList"></ul>
+      </div>
+      <button type="button" class="btn" id="tagApply" style="width:100%" disabled>標記</button>
+    </div>
+
+    <div id="evPaneDiaries" hidden>
+      <ul class="txlist" id="evDiaryList"></ul>
+    </div>
   </section>
 
   <!-- 完成畫面（刪除後、核銷後） -->
@@ -476,6 +596,13 @@
   <div class="inner">
     <div class="count" id="settleCount"><b>已選 0 筆</b></div>
     <button type="button" class="btn" id="settleExecBtn" disabled>確認核銷</button>
+  </div>
+</div>
+
+<div class="bar" id="eventNewBar" hidden>
+  <div class="inner">
+    <button type="button" class="btn plain" id="nCloseBtn">返回</button>
+    <button type="button" class="btn" id="nCreateBtn">建立活動</button>
   </div>
 </div>
 
@@ -583,8 +710,12 @@
   </div>
 </dialog>
 
+<div class="busy" id="busy" hidden role="status" aria-live="polite">
+  <div class="box"><div class="spinner"></div><span id="busyText">處理中…</span></div>
+</div>
+
 <!-- 版本號：每次更新這個檔案都要改（寫死在 HTML，JS 出錯也看得到；手機上看到舊版號 = 還在用快取） -->
-<footer class="version">版本 2026-11-27b 記帳管理（列表、多筆修改、核銷、日記、活動）</footer>
+<footer class="version">版本 2026-11-28 記帳管理（列表、多筆修改、核銷、日記、活動）</footer>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
@@ -706,16 +837,46 @@
     return res.json();
   }
 
+  // 寫入時的「處理中」遮罩：看得到在處理，也擋住連按
+  const BUSY_LABELS = {
+    tx_update: "儲存中…", tx_delete: "刪除中…", tx_batch_update: "修改中…", tx_batch_delete: "刪除中…",
+    settle_execute: "核銷中…", settle_cancel: "取消核銷中…",
+    diary_update: "儲存中…", diary_append: "補充中（整理摘要與花費）…", diary_delete: "刪除中…",
+    event_create: "建立活動中…", event_update: "儲存中…", event_detach: "移出中…", event_tag: "標記中…",
+    event_fx_recalc: "重算中…"
+  };
+  let busyCount = 0;
+
+  function showBusy(text) {
+    busyCount++;
+    $("busyText").textContent = text || "處理中…";
+    $("busy").hidden = false;
+  }
+
+  function hideBusy() {
+    busyCount = Math.max(0, busyCount - 1);
+    if (busyCount === 0) $("busy").hidden = true;
+  }
+
   async function apiPost(action, body) {
-    if (MOCK) return mockApi(action, body);
-    const idToken = liff.getIDToken();
-    if (!idToken) return { ok: false, error: { code: "AUTH_EXPIRED", message: "登入已過期" } };
-    // 字串 body 預設是 text/plain，不會觸發 CORS 預檢
-    const res = await fetch(CONFIG.API_URL + "?api=liff", {
-      method: "POST",
-      body: JSON.stringify(Object.assign({ action: action, idToken: idToken }, body || {}))
-    });
-    return res.json();
+    let label = BUSY_LABELS[action] || "處理中…";
+    if (action === "event_status") {
+      label = { end: "結束活動中…", reopen: "重新開始中…", cancel: "取消活動中（清除標記）…" }[body && body.op] || label;
+    }
+    showBusy(label);
+    try {
+      if (MOCK) return await mockApi(action, body);
+      const idToken = liff.getIDToken();
+      if (!idToken) return { ok: false, error: { code: "AUTH_EXPIRED", message: "登入已過期" } };
+      // 字串 body 預設是 text/plain，不會觸發 CORS 預檢
+      const res = await fetch(CONFIG.API_URL + "?api=liff", {
+        method: "POST",
+        body: JSON.stringify(Object.assign({ action: action, idToken: idToken }, body || {}))
+      });
+      return await res.json();
+    } finally {
+      hideBusy();
+    }
   }
 
   function handleAuthError(result) {
@@ -734,7 +895,8 @@
   }
 
   function hideAllViews() {
-    ["listView", "editView", "doneView", "settleView", "diaryView", "eventsView", "eventView"].forEach(function (id) { $(id).hidden = true; });
+    ["listView", "editView", "doneView", "settleView", "diaryView", "eventsView", "eventView", "eventNewView"].forEach(function (id) { $(id).hidden = true; });
+    $("eventNewBar").hidden = true;
     $("listBar").hidden = true;
     $("editBar").hidden = true;
     $("settleBar").hidden = true;
@@ -847,25 +1009,36 @@
 
   // ---------- 畫面切換 ----------
 
+  // 同一頁內的「上一頁」：每次往下一層（列表 → 編輯、活動列表 → 活動 → 某筆帳）
+  // 推一筆要回去的畫面；按「返回」或手機返回鍵（popstate）就回到那裡。
   const nav = {
-    fromList: false,  // 編輯頁是不是從列表或核銷頁點進去的（決定「關閉」或「返回」）
-    returnView: ""    // "list" 或 "settle"
+    stack: [],
+    get fromList() { return this.stack.length > 0; },
+    get returnView() { const t = this.stack[this.stack.length - 1]; return t ? t.view : ""; }
   };
 
+  const BACK_LABELS = { list: "返回列表", settle: "返回核銷", events: "返回活動列表", event: "返回活動" };
+
+  function backLabel() {
+    return nav.fromList ? (BACK_LABELS[nav.returnView] || "返回") : "關閉";
+  }
+
   window.addEventListener("popstate", function () {
-    if (!nav.fromList) return;
-    const back = nav.returnView;
-    nav.fromList = false;
-    nav.returnView = "";
-    if (back === "settle") showSettle(true);
-    else if (back === "events") showEvents(true);
+    const back = nav.stack.pop();
+    if (!back) return;
+    if (back.view === "settle") showSettle(true);
+    else if (back.view === "events") showEvents(true);
+    else if (back.view === "event") showEvent(back.id);
     else showList(true);
   });
 
-  function openEditFrom(view, id) {
-    nav.fromList = true;
-    nav.returnView = view;
-    history.pushState({ view: "edit" }, "", "?view=edit&id=" + encodeURIComponent(id) + (MOCK ? "&mock=1" : ""));
+  function pushView(returnTo, url) {
+    nav.stack.push(returnTo);
+    history.pushState({ depth: nav.stack.length }, "", url + (MOCK ? "&mock=1" : ""));
+  }
+
+  function openEditFrom(view, id, returnId) {
+    pushView({ view: view, id: returnId || "" }, "?view=edit&id=" + encodeURIComponent(id));
     showEdit(id);
   }
 
@@ -875,7 +1048,7 @@
 
   function backToList() {
     if (nav.fromList) {
-      history.back();   // popstate → 回到列表或核銷頁
+      history.back();   // popstate → 回到上一層
     } else {
       closeLiff();
     }
@@ -1393,9 +1566,8 @@
     $("boot").hidden = false;
     $("boot").innerHTML = '<div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:70%"></div>';
     $("editNotice").innerHTML = "";
-    const backLabel = nav.returnView === "settle" ? "返回核銷" : "返回列表";
-    $("closeBtn").textContent = nav.fromList ? backLabel : "關閉";
-    $("doneClose").textContent = nav.fromList ? backLabel : "關閉";
+    $("closeBtn").textContent = backLabel();
+    $("doneClose").textContent = backLabel();
     $("doneBack").hidden = true;
     let result;
     try {
@@ -2019,6 +2191,7 @@
     }
     diaryEdit.d = result.data.diary;
     diaryEdit.options = result.data.options || null;
+    $("dCloseBtn").textContent = backLabel();
     $("boot").hidden = true;
     $("diaryView").hidden = false;
     $("diaryNotice").innerHTML = "";
@@ -2209,7 +2382,7 @@
     $("dContent").addEventListener("input", refreshDiaryDirty);
     $("dEvent").addEventListener("change", refreshDiaryDirty);
     $("dSaveBtn").addEventListener("click", saveDiary);
-    $("dCloseBtn").addEventListener("click", closeLiff);
+    $("dCloseBtn").addEventListener("click", backToList);
     $("dAppendBtn").addEventListener("click", appendDiary);
     $("dDeleteBtn").addEventListener("click", deleteDiary);
     $("dAddTx").addEventListener("click", openLinkDialog);
@@ -2303,9 +2476,7 @@
   }
 
   function openEventFromList(id) {
-    nav.fromList = true;
-    nav.returnView = "events";
-    history.pushState({ view: "event" }, "", "?view=event&id=" + encodeURIComponent(id) + (MOCK ? "&mock=1" : ""));
+    pushView({ view: "events" }, "?view=event&id=" + encodeURIComponent(id));
     showEvent(id);
   }
 
@@ -2442,7 +2613,7 @@
     hideAllViews();
     $("boot").hidden = false;
     $("boot").innerHTML = '<div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:70%"></div>';
-    $("evCloseBtn").textContent = nav.fromList ? "返回活動列表" : "關閉";
+    $("evCloseBtn").textContent = backLabel();
     let result;
     try {
       result = await apiGet("event_get", { id: id });
@@ -2455,14 +2626,17 @@
       showFatal(errorMessage(result));
       return;
     }
+    const sameEvent = events.ev && events.ev.id === result.data.event.id;
     events.ev = result.data.event;
     events.options = result.data.options;
+    events.overview = result.data.overview || null;
     $("boot").hidden = true;
     $("eventView").hidden = false;
     $("eventNotice").innerHTML = "";
     renderFollowups(null);
     window.scrollTo(0, 0);
     renderEvent();
+    showEventTab(sameEvent ? evTabs.tab : "overview");
   }
 
   function eventConflictNotice(result) {
@@ -2525,7 +2699,7 @@
           (s.cleared_transactions || s.cleared_diaries
             ? "，並把 " + (s.cleared_transactions || 0) + " 筆帳、" + (s.cleared_diaries || 0) + " 篇日記的活動標記清掉。"
             : "。");
-        $("doneClose").textContent = nav.fromList ? "返回活動列表" : "關閉";
+        $("doneClose").textContent = backLabel();
         $("doneBack").hidden = true;
         $("doneView").hidden = false;
         return;
@@ -2615,6 +2789,410 @@
     });
   }
 
+  // ---------- 活動：新增（ADR 0022 第 2 段）----------
+
+  const newEv = { options: null, scope: "family", members: [] };
+
+  function setNewScope(scope) {
+    const opt = newEv.options;
+    if (scope === "family" && !opt.family) scope = "personal";
+    newEv.scope = scope;
+    Array.prototype.forEach.call($("nScope").querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute("data-value") === scope ? "true" : "false");
+    });
+    $("nScopeHint").textContent = scope === "family"
+      ? "記在「" + opt.family.book_name + "」，家庭帳本的成員都看得到"
+      : "只有你看得到" + (opt.personal.book_name ? "，記在「" + opt.personal.book_name + "」" : "");
+    $("nMembersWrap").hidden = scope !== "family";
+  }
+
+  function renderNewMembers() {
+    const box = $("nMembers");
+    box.innerHTML = "";
+    if (!newEv.options.family) return;
+    newEv.options.family.members.forEach(function (m) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = m.alias;
+      b.setAttribute("aria-pressed", newEv.members.indexOf(m.user_code) >= 0 ? "true" : "false");
+      b.addEventListener("click", function () {
+        const i = newEv.members.indexOf(m.user_code);
+        if (i >= 0) newEv.members.splice(i, 1); else newEv.members.push(m.user_code);
+        b.setAttribute("aria-pressed", i >= 0 ? "false" : "true");
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function refreshNewCurrency() {
+    $("nRateWrap").hidden = $("nCurrency").value === "TWD";
+  }
+
+  async function showEventNew() {
+    hideAllViews();
+    $("boot").hidden = false;
+    $("boot").innerHTML = '<div class="skeleton" style="width:40%"></div>';
+    $("nCloseBtn").textContent = backLabel();
+    let result;
+    try {
+      result = await apiGet("event_new_options", {});
+    } catch (e) { showFatal("網路連線失敗，請稍後再試"); return; }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      showFatal(errorMessage(result));
+      return;
+    }
+    const opt = newEv.options = result.data;
+    $("nName").value = "";
+    $("nAliases").value = "";
+    $("nStart").value = opt.today;
+    $("nEnd").value = "";
+    const type = $("nType");
+    type.innerHTML = "";
+    opt.types.forEach(function (t) { type.appendChild(option(t, t, t === "旅行")); });
+    const cur = $("nCurrency");
+    cur.innerHTML = "";
+    opt.currencies.forEach(function (c) { cur.appendChild(option(c, c === "TWD" ? "台幣 TWD" : c, c === "TWD")); });
+    $("nRate").value = "";
+    newEv.members = opt.family ? opt.family.members.map(function (m) { return m.user_code; }) : [];
+    $("nScope").querySelector('[data-value="family"]').disabled = !opt.family;
+    setNewScope(opt.family ? "family" : "personal");
+    renderNewMembers();
+    refreshNewCurrency();
+    $("eventNewNotice").innerHTML = "";
+    $("boot").hidden = true;
+    $("eventNewView").hidden = false;
+    $("eventNewBar").hidden = false;
+    window.scrollTo(0, 0);
+  }
+
+  function openEventNew() {
+    pushView({ view: "events" }, "?view=event_new");
+    showEventNew();
+  }
+
+  async function createEvent(extra) {
+    const name = $("nName").value.trim();
+    if (!name) { $("eventNewNotice").innerHTML = noticeHtml("err", "請輸入活動名稱"); return; }
+    if (!$("nStart").value) { $("eventNewNotice").innerHTML = noticeHtml("err", "請選開始日"); return; }
+    if ($("nEnd").value && $("nEnd").value < $("nStart").value) { $("eventNewNotice").innerHTML = noticeHtml("err", "結束日不能早於開始日"); return; }
+    if (newEv.scope === "family" && newEv.members.length === 0) { $("eventNewNotice").innerHTML = noticeHtml("err", "至少要有一位參加者"); return; }
+    const body = Object.assign({
+      event_name: name,
+      aliases: $("nAliases").value.split(/[,，、\s]+/).map(function (x) { return x.trim(); }).filter(Boolean),
+      event_type: $("nType").value,
+      scope: newEv.scope,
+      member_user_ids: newEv.scope === "family" ? newEv.members : [],
+      start_date: $("nStart").value,
+      end_date: $("nEnd").value,
+      default_currency: $("nCurrency").value,
+      exchange_rate: $("nCurrency").value === "TWD" ? "" : $("nRate").value.trim(),
+      request_id: newRequestId()
+    }, extra || {});
+    let result;
+    try {
+      result = await apiPost("event_create", body);
+    } catch (e) {
+      $("eventNewNotice").innerHTML = noticeHtml("err", "網路連線失敗，請稍後再試（這次可能沒有建立）");
+      return;
+    }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      $("eventNewNotice").innerHTML = noticeHtml("err", escapeHtml(errorMessage(result)));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    const d = result.data;
+    if (d.needs === "same_name") {
+      const e = d.existing;
+      const open = await confirmBox(
+        "今年已經有「" + e.name + "」（" + eventPeriodText(e) + "，" + PHASE_LABEL[e.phase] + "）。\n\n要開啟那個活動來修改，還是建立一個新的？",
+        "開啟那個", false, "建立新的"
+      );
+      createEvent(Object.assign({}, extra || {}, { same_name_choice: open ? "open" : "new" }));
+      return;
+    }
+    if (d.needs === "conflict") {
+      const end = await confirmBox(
+        "這段期間已經有進行中的活動：\n" + d.conflicts.map(function (c) { return "・" + c.name + "（" + eventPeriodText(c) + "）"; }).join("\n") +
+        "\n\n要先結束舊的，還是兩個都保留？",
+        "先結束舊的", false, "兩個都保留"
+      );
+      createEvent(Object.assign({}, extra || {}, { conflict_choice: end ? "end" : "keep" }));
+      return;
+    }
+    const id = d.created || d.opened;
+    events.loaded = false;
+    // 換掉「新增」這一層：返回時回到活動列表
+    history.replaceState({ depth: nav.stack.length }, "", "?view=event&id=" + encodeURIComponent(id) + (MOCK ? "&mock=1" : ""));
+    await showEvent(id);
+    let msg = d.opened ? "已開啟原本的活動" : "✅ 已建立活動";
+    if (d.ended_conflicts && d.ended_conflicts.length) msg += "，並結束了 " + d.ended_conflicts.join("、");
+    if (d.tag_candidates > 0) msg += "。\n這段期間有 " + d.tag_candidates + " 筆帳還沒掛活動，可以到下方「補標記」加進來。";
+    showEventNotice("ok", escapeHtml(msg));
+  }
+
+  function bindEventNew() {
+    $("evNewBtn").addEventListener("click", openEventNew);
+    $("nScope").addEventListener("click", function (e) {
+      const b = e.target.closest("button");
+      if (b && !b.disabled) setNewScope(b.getAttribute("data-value"));
+    });
+    $("nCurrency").addEventListener("change", refreshNewCurrency);
+    $("nType").addEventListener("change", function () {
+      $("nCurrencyHint").hidden = this.value !== "旅行";
+    });
+    $("nCreateBtn").addEventListener("click", function () { createEvent({}); });
+    $("nCloseBtn").addEventListener("click", backToList);
+  }
+
+  // ---------- 活動：總覽／花費／補標記／日記 ----------
+
+  const evTabs = { tab: "overview", txs: [], txSelected: {}, tag: null, tagSelected: {}, tagDiarySelected: {} };
+
+  function renderEventOverview() {
+    const o = events.overview;
+    if (!o) { $("evPaneOverview").innerHTML = ""; return; }
+    if (!o.count) { $("evPaneOverview").innerHTML = '<div class="muted">還沒有掛上這個活動的花費</div>'; return; }
+    const lines = function (list) {
+      return '<ul class="lines">' + list.map(function (x) {
+        return "<li><span>" + escapeHtml(x.name) + "</span><span>" + money(x.amount) + "</span></li>";
+      }).join("") + "</ul>";
+    };
+    $("evPaneOverview").innerHTML =
+      '<div class="muted">' + o.count + " 筆支出" + (o.unconverted ? "（" + o.unconverted + " 筆外幣還沒換算）" : "") + "</div>" +
+      '<div class="big">' + money(o.total) + "</div>" +
+      (o.by_currency.length ? '<div class="muted">' + o.by_currency.map(function (c) { return c.name + " " + Number(c.amount).toLocaleString("en-US"); }).join("・") + "</div>" : "") +
+      '<div class="muted" style="margin-top:10px">分類</div>' + lines(o.by_category) +
+      '<div class="muted" style="margin-top:10px">誰付的</div>' + lines(o.by_payer);
+  }
+
+  function showEventTab(tab) {
+    evTabs.tab = tab;
+    Array.prototype.forEach.call($("evTabs").querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-selected", b.getAttribute("data-tab") === tab ? "true" : "false");
+    });
+    $("evPaneOverview").hidden = tab !== "overview";
+    $("evPaneTxs").hidden = tab !== "txs";
+    $("evPaneTag").hidden = tab !== "tag";
+    $("evPaneDiaries").hidden = tab !== "diaries";
+    $("evTabNotice").innerHTML = "";
+    if (tab === "overview") renderEventOverview();
+    if (tab === "txs") loadEventTxs();
+    if (tab === "tag") loadTagCandidates(false);
+    if (tab === "diaries") renderEventDiaries();
+  }
+
+  function eventTxRow(tx, selectedMap, onToggle, onOpen) {
+    const li = document.createElement("li");
+    const on = !!selectedMap[tx.id];
+    li.className = "tx" + (on ? " selected" : "");
+    li.innerHTML =
+      '<label class="check"><input type="checkbox"' + (on ? " checked" : "") + "></label>" +
+      '<div class="body"><div class="top"><span class="name">' + escapeHtml(tx.note || tx.item || tx.name || tx.category_path) + "</span>" +
+      '<span class="amt">' + escapeHtml(amountText(tx)) + "</span></div>" +
+      '<div class="sub">' + escapeHtml([dateLabel(tx.date), tx.category_path, tx.payer_alias ? tx.payer_alias + " 付" : "", tx.book_name].filter(Boolean).join("・")) + "</div></div>";
+    li.querySelector("input").addEventListener("change", function () {
+      if (this.checked) selectedMap[tx.id] = tx; else delete selectedMap[tx.id];
+      li.classList.toggle("selected", this.checked);
+      onToggle();
+    });
+    if (onOpen) li.querySelector(".body").addEventListener("click", function () { onOpen(tx); });
+    return li;
+  }
+
+  function refreshEventTxSelection() {
+    const n = Object.keys(evTabs.txSelected).length;
+    $("evTxDetach").disabled = n === 0;
+    $("evTxDetach").textContent = n ? "移出活動（" + n + " 筆）" : "移出活動";
+  }
+
+  async function loadEventTxs() {
+    evTabs.txSelected = {};
+    refreshEventTxSelection();
+    $("evTxList").innerHTML = '<li><div class="skeleton"></div></li>';
+    let result;
+    try {
+      result = await apiGet("tx_list", { activityId: events.ev.id, limit: 100 });
+    } catch (e) { $("evTxList").innerHTML = '<li class="error">網路連線失敗，請稍後再試</li>'; return; }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      $("evTxList").innerHTML = '<li class="error">' + escapeHtml(errorMessage(result)) + "</li>";
+      return;
+    }
+    evTabs.txs = result.data.items;
+    $("evTxSummary").textContent = "共 " + result.data.total + " 筆" + (result.data.hasMore ? "（列出最新 100 筆）" : "") + "，點一筆可以修改";
+    $("evTxList").innerHTML = "";
+    if (evTabs.txs.length === 0) { $("evTxList").innerHTML = '<li class="empty">還沒有掛上這個活動的帳</li>'; return; }
+    evTabs.txs.forEach(function (tx) {
+      $("evTxList").appendChild(eventTxRow(tx, evTabs.txSelected, refreshEventTxSelection, function (t) {
+        openEditFrom("event", t.id, events.ev.id);
+      }));
+    });
+  }
+
+  async function detachSelectedTxs() {
+    const items = Object.keys(evTabs.txSelected).map(function (id) { return evTabs.txSelected[id]; });
+    if (!items.length) return;
+    const ok = await confirmBox("把 " + items.length + " 筆移出「" + events.ev.name + "」嗎？\n（依活動自動套用的外幣會改回台幣）", "移出");
+    if (!ok) return;
+    try {
+      const result = await apiPost("event_detach", {
+        id: events.ev.id,
+        items: items.map(function (t) { return { id: t.id, expected_updated_at: t.updated_at }; }),
+        request_id: newRequestId()
+      });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        $("evTabNotice").innerHTML = noticeHtml(result.error.code === "CONFLICT" ? "warn" : "err", escapeHtml(errorMessage(result) + "（這次沒有移出任何一筆）"));
+        loadEventTxs();
+        return;
+      }
+      $("evTabNotice").innerHTML = noticeHtml("ok", escapeHtml("🧹 已移出 " + result.data.detached + " 筆"));
+      events.loaded = false;
+      refreshEventOverviewQuietly();
+      loadEventTxs();
+    } catch (e) {
+      $("evTabNotice").innerHTML = noticeHtml("err", "網路連線失敗，請重新載入確認");
+    }
+  }
+
+  // 花費變動後更新總覽與上方的金額（不重畫表單，避免蓋掉正在改的欄位）
+  async function refreshEventOverviewQuietly() {
+    try {
+      const result = await apiGet("event_get", { id: events.ev.id });
+      if (!result.ok) return;
+      events.overview = result.data.overview;
+      events.ev.expense_total = result.data.event.expense_total;
+      events.ev.expense_count = result.data.event.expense_count;
+      events.ev.updated_at = result.data.event.updated_at;
+      if (evTabs.tab === "overview") renderEventOverview();
+      if (evTabs.tab === "diaries") renderEventDiaries();
+    } catch (e) { /* 忽略 */ }
+  }
+
+  function refreshTagSelection() {
+    const items = Object.keys(evTabs.tagSelected).map(function (id) { return evTabs.tagSelected[id]; });
+    const total = items.reduce(function (s, t) { return s + (Number(t.amount_twd) || 0); }, 0);
+    const nd = Object.keys(evTabs.tagDiarySelected).length;
+    $("tagApply").disabled = items.length === 0 && nd === 0;
+    $("tagApply").textContent = "標記 " + items.length + " 筆（" + money(total) + "）" + (nd ? "、" + nd + " 篇日記" : "");
+    const all = evTabs.tag && evTabs.tag.items.length > 0 && evTabs.tag.items.every(function (t) { return evTabs.tagSelected[t.id]; });
+    $("tagToggleAll").textContent = all ? "全不選" : "全選";
+  }
+
+  async function loadTagCandidates(useInputs) {
+    $("tagList").innerHTML = '<li><div class="skeleton"></div></li>';
+    $("tagDiaryWrap").hidden = true;
+    const params = { id: events.ev.id };
+    if (useInputs) {
+      if ($("tagFrom").value) params.from = $("tagFrom").value;
+      if ($("tagTo").value) params.to = $("tagTo").value;
+      if ($("tagQ").value.trim()) params.q = $("tagQ").value.trim();
+    }
+    let result;
+    try {
+      result = await apiGet("event_tag_candidates", params);
+    } catch (e) { $("tagList").innerHTML = '<li class="error">網路連線失敗，請稍後再試</li>'; return; }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      $("tagList").innerHTML = '<li class="error">' + escapeHtml(errorMessage(result)) + "</li>";
+      return;
+    }
+    const d = evTabs.tag = result.data;
+    if (!useInputs) { $("tagFrom").value = d.from; $("tagTo").value = d.to; }
+    evTabs.tagSelected = {};
+    evTabs.tagDiarySelected = {};
+    d.items.forEach(function (t) { evTabs.tagSelected[t.id] = t; });
+    d.diaries.forEach(function (x) { evTabs.tagDiarySelected[x.id] = true; });
+    $("tagSummary").textContent =
+      shortYmd(d.from) + "～" + shortYmd(d.to) + " 有 " + d.total + " 筆還沒掛活動" +
+      (d.truncated ? "（列出前 " + d.items.length + " 筆）" : "") +
+      (d.others ? "；另有 " + d.others + " 筆已掛其他活動，不會改" : "");
+    $("tagList").innerHTML = "";
+    if (d.items.length === 0) $("tagList").innerHTML = '<li class="empty">這段期間沒有要補標記的帳</li>';
+    d.items.forEach(function (t) { $("tagList").appendChild(eventTxRow(t, evTabs.tagSelected, refreshTagSelection, null)); });
+    $("tagDiaryList").innerHTML = "";
+    $("tagDiaryWrap").hidden = d.diaries.length === 0;
+    d.diaries.forEach(function (x) {
+      const li = document.createElement("li");
+      li.className = "tx selected";
+      li.innerHTML = '<label class="check"><input type="checkbox" checked></label><div class="body"><div class="top"><span class="name">' +
+        escapeHtml(x.summary || "（沒有摘要）") + '</span></div><div class="sub">' + escapeHtml(dateLabel(x.date) + "・" + x.author) + "</div></div>";
+      li.querySelector("input").addEventListener("change", function () {
+        if (this.checked) evTabs.tagDiarySelected[x.id] = true; else delete evTabs.tagDiarySelected[x.id];
+        li.classList.toggle("selected", this.checked);
+        refreshTagSelection();
+      });
+      $("tagDiaryList").appendChild(li);
+    });
+    refreshTagSelection();
+  }
+
+  async function applyTag() {
+    const ids = Object.keys(evTabs.tagSelected);
+    const diaryIds = Object.keys(evTabs.tagDiarySelected);
+    if (!ids.length && !diaryIds.length) return;
+    const ok = await confirmBox("把 " + ids.length + " 筆帳" + (diaryIds.length ? "、" + diaryIds.length + " 篇日記" : "") + "算進「" + events.ev.name + "」？", "標記");
+    if (!ok) return;
+    try {
+      const result = await apiPost("event_tag", { id: events.ev.id, ids: ids, diary_ids: diaryIds, request_id: newRequestId() });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        $("evTabNotice").innerHTML = noticeHtml("err", escapeHtml(errorMessage(result)));
+        return;
+      }
+      const r = result.data;
+      $("evTabNotice").innerHTML = noticeHtml("ok", escapeHtml(
+        "🏷 已把 " + r.tagged + " 筆帳" + (r.diaries ? "、" + r.diaries + " 篇日記" : "") + "算進「" + events.ev.name + "」" +
+        (r.skipped > 0 ? "（" + r.skipped + " 筆剛被掛上其他活動或已刪除，沒有改）" : "")));
+      events.loaded = false;
+      refreshEventOverviewQuietly();
+      loadTagCandidates(true);
+    } catch (e) {
+      $("evTabNotice").innerHTML = noticeHtml("err", "網路連線失敗，請重新載入確認");
+    }
+  }
+
+  function renderEventDiaries() {
+    const list = (events.overview && events.overview.diaries) || [];
+    const ul = $("evDiaryList");
+    ul.innerHTML = "";
+    if (list.length === 0) { ul.innerHTML = '<li class="empty">這個活動還沒有日記（到「補標記」可以把期間內的日記加進來）</li>'; return; }
+    list.forEach(function (d) {
+      const li = document.createElement("li");
+      li.className = "tx";
+      li.innerHTML = '<div class="body"><div class="top"><span class="name">' + escapeHtml(d.summary || "（沒有摘要）") + "</span></div>" +
+        '<div class="sub">' + escapeHtml([dateLabel(d.date) + (d.day > 0 ? "・第 " + d.day + " 天" : ""), d.author, d.scope === "personal" ? "🔒 個人" : ""].filter(Boolean).join("・")) + "</div></div>";
+      li.querySelector(".body").addEventListener("click", function () {
+        pushView({ view: "event", id: events.ev.id }, "?view=diary&id=" + encodeURIComponent(d.id));
+        showDiary(d.id);
+      });
+      ul.appendChild(li);
+    });
+  }
+
+  function bindEventTabs() {
+    $("evTabs").addEventListener("click", function (e) {
+      const b = e.target.closest("button");
+      if (b) showEventTab(b.getAttribute("data-tab"));
+    });
+    $("evTxDetach").addEventListener("click", detachSelectedTxs);
+    $("tagSearch").addEventListener("click", function () { loadTagCandidates(true); });
+    $("tagApply").addEventListener("click", applyTag);
+    $("tagToggleAll").addEventListener("click", function () {
+      const d = evTabs.tag;
+      if (!d) return;
+      const all = d.items.length > 0 && d.items.every(function (t) { return evTabs.tagSelected[t.id]; });
+      d.items.forEach(function (t) { if (all) delete evTabs.tagSelected[t.id]; else evTabs.tagSelected[t.id] = t; });
+      Array.prototype.forEach.call($("tagList").querySelectorAll(".tx"), function (li) {
+        li.classList.toggle("selected", !all);
+        li.querySelector("input").checked = !all;
+      });
+      refreshTagSelection();
+    });
+  }
+
   // ---------- 假資料（?mock=1）----------
 
   const MOCK_OPTIONS = {
@@ -2653,6 +3231,7 @@
         if (action === "tx_list") {
           let items = MOCK_TXS.slice();
           if (params.ids) items = items.filter(function (t) { return params.ids.split(",").indexOf(t.id) >= 0; });
+          if (params.activityId) items = items.filter(function (t) { return t.activity_id === params.activityId; });
           if (params.bookId) items = items.filter(function (t) { return t.book_id === params.bookId; });
           if (params.q) items = items.filter(function (t) { return (t.note + t.category_path).indexOf(params.q) >= 0; });
           const data = {
@@ -2685,7 +3264,11 @@
         if (action === "event_get") {
           resolve({ ok: true, data: { event: Object.assign({}, MOCK_EVENT, params.id === "EV2" ? { id: "EV2", status: "ended", phase: "ended", end_date: "2026-11-24" } : {}),
             options: { types: ["旅行", "聚會", "節日", "其他"], currencies: ["TWD", "JPY", "USD", "KRW"],
-              members: [{ user_code: "soso", alias: "老公" }, { user_code: "twotwo", alias: "老婆" }], today: "2026-11-27" } } });
+              members: [{ user_code: "soso", alias: "老公" }, { user_code: "twotwo", alias: "老婆" }], today: "2026-11-27" },
+            overview: { total: 38600, count: 12, unconverted: 1, by_currency: [{ name: "JPY", amount: 52000 }],
+              by_category: [{ name: "餐飲", amount: 15000 }, { name: "交通", amount: 12600 }, { name: "住宿", amount: 11000 }],
+              by_payer: [{ name: "老公", amount: 30000 }, { name: "老婆", amount: 8600 }],
+              diaries: [{ id: "DY_1", date: "2026-11-22", author: "老公", scope: "family", day: 3, summary: "京都吃拉麵" }] } } });
           return;
         }
         if (action === "event_update") {
@@ -2713,6 +3296,25 @@
             followups: { outside_auto: [], outside_auto_total: 0, fx_recalc: [], fx_recalc_total: 0 } } });
           return;
         }
+        if (action === "event_new_options") {
+          resolve({ ok: true, data: { family: { book_id: "B1", book_name: "家庭", members: [{ user_code: "soso", alias: "老公" }, { user_code: "twotwo", alias: "老婆" }] },
+            personal: { book_name: "soso 個人" }, me: "soso", types: ["旅行", "聚會", "節日", "其他"], currencies: ["TWD", "JPY", "USD", "KRW"], today: "2026-11-27" } });
+          return;
+        }
+        if (action === "event_create") {
+          if (params.event_name === "日本旅行" && !params.same_name_choice) { resolve({ ok: true, data: { needs: "same_name", existing: MOCK_EVENT } }); return; }
+          if (params.same_name_choice === "open") { resolve({ ok: true, data: { opened: "EV1" } }); return; }
+          if (!params.conflict_choice) { resolve({ ok: true, data: { needs: "conflict", conflicts: [MOCK_EVENT] } }); return; }
+          resolve({ ok: true, data: { created: "EV9", ended_conflicts: params.conflict_choice === "end" ? ["日本旅行"] : [], tag_candidates: 3 } });
+          return;
+        }
+        if (action === "event_tag_candidates") {
+          resolve({ ok: true, data: { from: params.from || "2026-11-20", to: params.to || "2026-11-30", total: 2, truncated: false, already: 12, others: 1,
+            items: [Object.assign({}, MOCK_TXS[0], { name: "午餐" }), Object.assign({}, MOCK_TXS[1], { name: "捷運" })],
+            diaries: [{ id: "DY_5", date: "2026-11-21", author: "老婆", summary: "到大阪" }] } });
+          return;
+        }
+        if (action === "event_tag") { resolve({ ok: true, data: { tagged: params.ids.length, skipped: 0, diaries: params.diary_ids.length } }); return; }
         if (action === "event_detach") { resolve({ ok: true, data: { detached: params.items.length } }); return; }
         if (action === "event_fx_recalc") { resolve({ ok: true, data: { recalculated: params.ids.length } }); return; }
         if (action === "diary_get") {
@@ -2792,6 +3394,8 @@
     bindSettle();
     bindDiary();
     bindEvents();
+    bindEventNew();
+    bindEventTabs();
     try {
       if (!MOCK) {
         if (!CONFIG.LIFF_ID) { showFatal("頁面還沒設定 LIFF ID"); return; }
@@ -2807,7 +3411,6 @@
       if (view === "edit") {
         const id = q.get("id") || (MOCK ? "TXN_1" : "");
         if (!id) { showFatal("缺少要修改的交易"); return; }
-        nav.fromList = false;
         await showEdit(id);
         return;
       }
@@ -2831,10 +3434,14 @@
         return;
       }
 
+      if (view === "event_new") {
+        await showEventNew();
+        return;
+      }
+
       if (view === "event") {
         const id = q.get("id") || (MOCK ? "EV1" : "");
         if (!id) { showFatal("缺少要修改的活動"); return; }
-        nav.fromList = false;
         await showEvent(id);
         return;
       }
