@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>家庭日記</title>
 <!--
-  LIFF 日記瀏覽頁（ADR 0015）：關鍵字搜尋、活動與日期篩選，只看不改（修改、刪除在聊天室）。
+  LIFF 日記瀏覽頁（ADR 0015）：關鍵字搜尋、活動與日期篩選，本頁只看；每篇的「✏️ 編輯／➕ 補充」開記帳管理頁的日記編輯（ADR 0021）。
 
   這個檔案會公開在 GitHub Pages，只能放「不是祕密」的設定：
   - LIFF_ID：日記頁自己的 LIFF app ID（和統計頁不同）
@@ -116,6 +116,7 @@
   .content { white-space: pre-wrap; word-break: break-word; }
   .content.clamp { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }
   .expand { font: inherit; font-size: 14px; border: none; background: none; color: var(--accent); padding: 4px 0 0; cursor: pointer; }
+  .edit-link { display: inline-block; margin-top: 8px; text-decoration: none; }
   mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1px; }
   .tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
   .tags span { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--chip); color: var(--text-2); }
@@ -171,13 +172,14 @@
   </div>
 </main>
 <!-- 版本號：每次更新這個檔案都要改（寫死在 HTML，JS 出錯也看得到；手機上看到舊版號 = 還在用快取） -->
-<footer class="version">版本 2026-11-21 日記頁</footer>
+<footer class="version">版本 2026-11-27 日記頁（編輯連結）</footer>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
   // ===== 設定區（只放公開資訊）=====
   const CONFIG = {
     LIFF_ID: "2012731001-gRUFYvRt",  // 日記頁自己的 LIFF ID（和統計頁不同）
+    MANAGE_LIFF_ID: "2012731001-v2KgwCNk",  // 記帳管理頁的 LIFF ID（日記的「編輯」連過去，ADR 0021）
     API_URL: "https://script.google.com/macros/s/AKfycbydOFXSiDdT5RAbLBGi97XF7U_zEtYxRRo4_FSWtsYkfHfO8mzaxpm1t_f8M1klsLiyuQ/exec"
   };
   // =================================
@@ -332,7 +334,15 @@
       (d.transactions && d.transactions.length
         ? '<ul class="txs"><li class="txs-title">這篇記的帳</li>' + d.transactions.map(txRow).join("") + "</ul>"
         : "") +
+      editLink(d) +
     "</article>";
+  }
+
+  // 開記帳管理頁的日記編輯（ADR 0021）：作者「編輯」，家庭日記的其他人「補充」
+  function editLink(d) {
+    if (!CONFIG.MANAGE_LIFF_ID || !d.id || !(d.can_edit || d.can_append)) return "";
+    const url = "https://liff.line.me/" + CONFIG.MANAGE_LIFF_ID + "?view=diary&id=" + encodeURIComponent(d.id);
+    return '<a class="expand edit-link" href="' + escapeHtml(url) + '">' + (d.can_edit ? "✏️ 編輯" : "➕ 補充") + "</a>";
   }
 
   function renderStatus(total) {
@@ -559,9 +569,12 @@
       const day = 21 - Math.floor(i / 2);
       const date = "2026-11-" + String(day).padStart(2, "0");
       all.push({
+        id: "DY_MOCK_" + i,
         date: date,
         author: i % 2 ? "老婆" : "老公",
         scope: i % 5 === 3 ? "personal" : "family",
+        can_edit: i % 2 === 0,      // 假設自己是老公
+        can_append: true,
         event: day >= 18 ? { name: "日本旅行", day: day - 17 } : null,
         event_id: day >= 18 ? "EV1" : "",
         content: i === 0 ? long : (i % 3 === 0 ? "晚餐吃拉麵，第 " + i + " 篇" : "今天在家整理房間，第 " + i + " 篇"),

@@ -347,6 +347,44 @@
     </div>
   </section>
 
+  <!-- 日記編輯（ADR 0021） -->
+  <section id="diaryView" hidden>
+    <h1 id="dTitle">日記</h1>
+    <div id="diaryNotice"></div>
+    <div class="card">
+      <div class="muted" id="dMeta" style="margin-bottom:8px"></div>
+      <div class="field" id="dEditWrap">
+        <label for="dContent">內容</label>
+        <textarea id="dContent" rows="8" maxlength="5000"></textarea>
+        <div class="hint">改全文後會重新產生摘要與標籤；花費不會重新記帳</div>
+      </div>
+      <div id="dContentRead" style="white-space:pre-wrap;word-break:break-word"></div>
+      <div class="muted" id="dSummary" style="margin-top:8px"></div>
+    </div>
+    <div class="card" id="dEventCard">
+      <div class="field">
+        <label for="dEvent">活動</label>
+        <select id="dEvent"></select>
+      </div>
+    </div>
+    <div class="card" id="dTxCard">
+      <div class="row" style="justify-content:space-between;margin-bottom:6px">
+        <span class="label" style="font-size:13px;color:var(--text-2)">這篇記的花費</span>
+        <button type="button" class="btn small plain" id="dAddTx">＋ 連結花費</button>
+      </div>
+      <ul class="txlist" id="dTxList"></ul>
+    </div>
+    <div class="card" id="dAppendCard">
+      <div class="field">
+        <label for="dAppend">補充（接在最後，不改原文）</label>
+        <textarea id="dAppend" rows="3" maxlength="2000" placeholder="例如：晚上又去吃了拉麵 280"></textarea>
+        <div class="hint" id="dAppendHint">補充裡有寫金額的花費會自動記帳</div>
+      </div>
+      <button type="button" class="btn" id="dAppendBtn" style="width:100%">送出補充</button>
+    </div>
+    <button type="button" class="btn link" id="dDeleteBtn">🗑 刪除這篇</button>
+  </section>
+
   <!-- 完成畫面（刪除後、核銷後） -->
   <section id="doneView" hidden>
     <div class="card" style="margin-top:16px">
@@ -373,6 +411,30 @@
     <button type="button" class="btn" id="settleExecBtn" disabled>確認核銷</button>
   </div>
 </div>
+
+<div class="bar" id="diaryBar" hidden>
+  <div class="inner">
+    <button type="button" class="btn plain" id="dCloseBtn">關閉</button>
+    <button type="button" class="btn" id="dSaveBtn" disabled>儲存</button>
+  </div>
+</div>
+
+<!-- 日記：連結花費 -->
+<dialog id="linkDialog">
+  <h2>連結花費</h2>
+  <div class="row">
+    <input type="date" id="lFrom" aria-label="開始日">
+    <span class="muted">～</span>
+    <input type="date" id="lTo" aria-label="結束日">
+    <button type="button" class="btn small" id="lLoad">查詢</button>
+  </div>
+  <p class="muted" style="margin:8px 0">勾選要連到這篇的花費；已連到其他日記的不能選。</p>
+  <ul class="txlist" id="lList"></ul>
+  <div class="actions">
+    <button type="button" class="btn plain" id="lCancel">取消</button>
+    <button type="button" class="btn" id="lOk">確定</button>
+  </div>
+</dialog>
 
 <div class="bar" id="editBar" hidden>
   <div class="inner">
@@ -434,7 +496,7 @@
 </dialog>
 
 <!-- 版本號：每次更新這個檔案都要改（寫死在 HTML，JS 出錯也看得到；手機上看到舊版號 = 還在用快取） -->
-<footer class="version">版本 2026-11-26b 記帳管理（列表、多筆修改、核銷）</footer>
+<footer class="version">版本 2026-11-27 記帳管理（列表、多筆修改、核銷、日記編輯）</footer>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
@@ -526,11 +588,12 @@
   }
 
   // 確認視窗：回傳 Promise<boolean>
-  function confirmBox(text, okLabel, danger) {
+  function confirmBox(text, okLabel, danger, cancelLabel) {
     return new Promise(function (resolve) {
       const dlg = $("confirmDialog");
       $("confirmText").textContent = text;
       $("confirmOk").textContent = okLabel || "確定";
+      $("confirmCancel").textContent = cancelLabel || "取消";
       $("confirmOk").className = "btn" + (danger ? " danger" : "");
       function done(v) {
         $("confirmOk").onclick = null;
@@ -583,10 +646,11 @@
   }
 
   function hideAllViews() {
-    ["listView", "editView", "doneView", "settleView"].forEach(function (id) { $(id).hidden = true; });
+    ["listView", "editView", "doneView", "settleView", "diaryView"].forEach(function (id) { $(id).hidden = true; });
     $("listBar").hidden = true;
     $("editBar").hidden = true;
     $("settleBar").hidden = true;
+    $("diaryBar").hidden = true;
   }
 
   function showFatal(message) {
@@ -1736,6 +1800,333 @@
     $("doneBack").addEventListener("click", function () { showSettle(true); });
   }
 
+  // ---------- 日記編輯（ADR 0021）----------
+
+  const diaryEdit = {
+    d: null,          // 伺服器上的目前值
+    options: null,
+    links: [],        // 目前畫面上的連結（交易物件）
+    busy: false
+  };
+
+  function diaryLinkIds() {
+    return diaryEdit.links.map(function (t) { return t.id; });
+  }
+
+  function diaryChanges() {
+    const d = diaryEdit.d;
+    const changes = {};
+    if (!d || !d.can_edit) return changes;
+    const content = $("dContent").value.replace(/\r\n/g, "\n").trim();
+    if (content !== d.content) changes.content = content;
+    const ev = $("dEvent").value;
+    if (ev !== (d.event_id || "")) changes.event_id = ev;
+    const now = diaryLinkIds().slice().sort().join(",");
+    const before = d.transactions.map(function (t) { return t.id; }).sort().join(",");
+    if (now !== before) changes.link_ids = diaryLinkIds();
+    return changes;
+  }
+
+  function refreshDiaryDirty() {
+    const changes = diaryChanges();
+    $("dContent").classList.toggle("changed", "content" in changes);
+    $("dEvent").classList.toggle("changed", "event_id" in changes);
+    $("dSaveBtn").disabled = diaryEdit.busy || Object.keys(changes).length === 0;
+  }
+
+  function showDiaryNotice(kind, html) {
+    $("diaryNotice").innerHTML = noticeHtml(kind, html);
+    if (html) window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function renderDiaryLinks() {
+    const d = diaryEdit.d;
+    const ul = $("dTxList");
+    ul.innerHTML = "";
+    if (diaryEdit.links.length === 0) {
+      ul.innerHTML = '<li class="muted">還沒有連結花費</li>';
+      return;
+    }
+    diaryEdit.links.forEach(function (tx) {
+      const li = document.createElement("li");
+      li.className = "tx";
+      li.innerHTML =
+        '<div class="body"><div class="top"><span class="name">' + escapeHtml(tx.note || tx.item || tx.category_path) + "</span>" +
+        '<span class="amt">' + escapeHtml(amountText(tx)) + "</span></div>" +
+        '<div class="sub">' + escapeHtml([dateLabel(tx.date), tx.category_path, tx.book_name || "帳本待選"].filter(Boolean).join("・")) + "</div></div>" +
+        (d.can_edit ? '<button type="button" class="btn small plain" aria-label="拿掉這筆">✕</button>' : "");
+      const btn = li.querySelector("button");
+      if (btn) {
+        btn.addEventListener("click", function () {
+          diaryEdit.links = diaryEdit.links.filter(function (t) { return t.id !== tx.id; });
+          renderDiaryLinks();
+          refreshDiaryDirty();
+        });
+      }
+      ul.appendChild(li);
+    });
+  }
+
+  function renderDiary() {
+    const d = diaryEdit.d;
+    $("dTitle").textContent = (d.scope === "personal" ? "🔒 個人日記" : "📔 家庭日記") + "　" + dateLabel(d.date);
+    $("dMeta").textContent =
+      d.author + " 寫" +
+      (d.event_name ? "・" + d.event_name + (d.event_day > 0 ? " 第 " + d.event_day + " 天" : "") : "") +
+      (d.can_edit ? "" : "・你只能補充，不能改原文");
+
+    $("dEditWrap").hidden = !d.can_edit;
+    $("dContentRead").hidden = d.can_edit;
+    $("dContent").value = d.content;
+    $("dContentRead").textContent = d.content;
+    $("dSummary").textContent =
+      (d.summary ? "摘要：" + d.summary : "") +
+      (d.tags && d.tags.length ? "　" + d.tags.map(function (t) { return "#" + t; }).join(" ") : "");
+
+    $("dEventCard").hidden = !d.can_edit;
+    if (d.can_edit) {
+      const ev = $("dEvent");
+      ev.innerHTML = "";
+      ev.appendChild(option("", "不屬於活動", !d.event_id));
+      let found = false;
+      (diaryEdit.options ? diaryEdit.options.events : []).forEach(function (e) {
+        if (e.event_id === d.event_id) found = true;
+        ev.appendChild(option(e.event_id, eventLabel(e), e.event_id === d.event_id));
+      });
+      if (d.event_id && !found) ev.appendChild(option(d.event_id, d.event_name || d.event_id, true));
+    }
+
+    $("dAddTx").hidden = !d.can_edit;
+    $("dTxCard").hidden = !d.can_edit && d.transactions.length === 0;
+    diaryEdit.links = d.transactions.slice();
+    renderDiaryLinks();
+
+    $("dAppendCard").hidden = !d.can_append;
+    $("dAppendHint").textContent =
+      (d.can_edit ? "" : "會在段落前標上「（你的暱稱補充）」。") + "補充裡有寫金額的花費會自動記帳";
+    $("dDeleteBtn").hidden = !d.can_delete;
+    $("diaryBar").hidden = false;
+    $("dSaveBtn").hidden = !d.can_edit;
+    refreshDiaryDirty();
+  }
+
+  async function showDiary(id) {
+    hideAllViews();
+    $("boot").hidden = false;
+    $("boot").innerHTML = '<div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:70%"></div>';
+    let result;
+    try {
+      result = await apiGet("diary_get", { id: id });
+    } catch (e) {
+      showFatal("網路連線失敗，請稍後再試");
+      return;
+    }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      showFatal(errorMessage(result));
+      return;
+    }
+    diaryEdit.d = result.data.diary;
+    diaryEdit.options = result.data.options || null;
+    $("boot").hidden = true;
+    $("diaryView").hidden = false;
+    $("diaryNotice").innerHTML = "";
+    window.scrollTo(0, 0);
+    renderDiary();
+  }
+
+  function diaryConflictNotice(result) {
+    showDiaryNotice("warn", escapeHtml(errorMessage(result)) +
+      '<br><button type="button" class="btn small plain" style="margin-top:8px" id="reloadDiary">重新載入</button>');
+    $("reloadDiary").onclick = function () { showDiary(diaryEdit.d.id); };
+  }
+
+  async function saveDiary() {
+    const changes = diaryChanges();
+    if (Object.keys(changes).length === 0) return;
+    if ("content" in changes && !changes.content) { showDiaryNotice("err", "日記內容不能是空白（要刪除請按「刪除這篇」）"); return; }
+    diaryEdit.busy = true;
+    $("dSaveBtn").textContent = "儲存中…";
+    refreshDiaryDirty();
+    try {
+      const result = await apiPost("diary_update", Object.assign({
+        id: diaryEdit.d.id,
+        expected_version: diaryEdit.d.version,
+        request_id: newRequestId()
+      }, changes));
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        if (result.error.code === "CONFLICT") diaryConflictNotice(result);
+        else showDiaryNotice("err", escapeHtml(errorMessage(result)));
+        return;
+      }
+      diaryEdit.d = result.data.diary;
+      renderDiary();
+      showDiaryNotice(result.data.note ? "warn" : "ok", escapeHtml("✅ 已儲存" + (result.data.note ? "（" + result.data.note + "）" : "")));
+    } catch (e) {
+      showDiaryNotice("err", "網路連線失敗，請重新載入確認是否已儲存");
+    } finally {
+      diaryEdit.busy = false;
+      $("dSaveBtn").textContent = "儲存";
+      refreshDiaryDirty();
+    }
+  }
+
+  async function appendDiary() {
+    const text = $("dAppend").value.trim();
+    if (!text) { showDiaryNotice("err", "補充的內容不能是空白"); return; }
+    if (Object.keys(diaryChanges()).length > 0) {
+      showDiaryNotice("warn", "你還有沒儲存的修改，請先按「儲存」再補充。");
+      return;
+    }
+    diaryEdit.busy = true;
+    $("dAppendBtn").disabled = true;
+    $("dAppendBtn").textContent = "送出中…";
+    try {
+      const result = await apiPost("diary_append", { id: diaryEdit.d.id, text: text, request_id: newRequestId() });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        showDiaryNotice("err", escapeHtml(errorMessage(result)));
+        return;
+      }
+      $("dAppend").value = "";
+      diaryEdit.d = result.data.diary;
+      renderDiary();
+      showDiaryNotice("ok", escapeHtml("✅ 已補充" + (result.data.note ? "，" + result.data.note : "")));
+    } catch (e) {
+      showDiaryNotice("err", "網路連線失敗，請重新載入確認是否已補充");
+    } finally {
+      diaryEdit.busy = false;
+      $("dAppendBtn").disabled = false;
+      $("dAppendBtn").textContent = "送出補充";
+    }
+  }
+
+  async function deleteDiary() {
+    const d = diaryEdit.d;
+    const ok = await confirmBox("確定要刪除這篇日記嗎？刪除後無法復原。", "刪除", true);
+    if (!ok) return;
+    const own = d.transactions.filter(function (t) { return t.own; }).length;
+    let withTx = false;
+    if (own > 0) {
+      withTx = await confirmBox(
+        "這篇記了 " + d.transactions.length + " 筆花費，其中 " + own + " 筆是你建立的。\n要連同這 " + own + " 筆一起刪除嗎？\n（不刪的帳會保留，只是不再連到日記）",
+        "一起刪除", true, "只刪日記"
+      );
+    }
+    try {
+      const result = await apiPost("diary_delete", {
+        id: d.id,
+        expected_version: d.version,
+        with_transactions: withTx,
+        request_id: newRequestId()
+      });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        if (result.error.code === "CONFLICT") diaryConflictNotice(result);
+        else showDiaryNotice("err", escapeHtml(errorMessage(result)));
+        return;
+      }
+      hideAllViews();
+      $("doneText").textContent = result.data.deleted_transactions
+        ? "🗑 已刪除這篇日記和 " + result.data.deleted_transactions + " 筆花費。"
+        : "🗑 已刪除這篇日記。";
+      $("doneClose").textContent = "關閉";
+      $("doneBack").hidden = true;
+      $("doneView").hidden = false;
+    } catch (e) {
+      showDiaryNotice("err", "網路連線失敗，請重新載入確認是否已刪除");
+    }
+  }
+
+  // 連結花費：列出日記日期前後的交易
+  const linkPick = { items: [], selected: {} };
+
+  function shiftDate(date, days) {
+    const p = date.split("-").map(Number);
+    const t = new Date(Date.UTC(p[0], p[1] - 1, p[2] + days));
+    return t.toISOString().slice(0, 10);
+  }
+
+  async function loadLinkCandidates() {
+    const f = $("lFrom").value, t = $("lTo").value;
+    if (!f || !t || f > t) { $("lList").innerHTML = '<li class="error">請選開始日與結束日</li>'; return; }
+    $("lList").innerHTML = '<li><div class="skeleton"></div></li>';
+    let result;
+    try {
+      result = await apiGet("tx_list", { from: f, to: t, limit: 100 });
+    } catch (e) {
+      $("lList").innerHTML = '<li class="error">網路連線失敗，請稍後再試</li>';
+      return;
+    }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      $("lList").innerHTML = '<li class="error">' + escapeHtml(errorMessage(result)) + "</li>";
+      return;
+    }
+    linkPick.items = result.data.items;
+    const ul = $("lList");
+    ul.innerHTML = "";
+    if (linkPick.items.length === 0) { ul.innerHTML = '<li class="muted">這段期間沒有交易</li>'; return; }
+    linkPick.items.forEach(function (tx) {
+      const other = !!tx.diary_id && tx.diary_id !== diaryEdit.d.id;
+      const on = !!linkPick.selected[tx.id];
+      const li = document.createElement("li");
+      li.className = "tx" + (on ? " selected" : "");
+      if (other) li.style.opacity = ".5";
+      li.innerHTML =
+        '<label class="check"><input type="checkbox"' + (on ? " checked" : "") + (other ? " disabled" : "") + "></label>" +
+        '<div class="body"><div class="top"><span class="name">' + escapeHtml(tx.note || tx.item || tx.category_path) + "</span>" +
+        '<span class="amt">' + escapeHtml(amountText(tx)) + "</span></div>" +
+        '<div class="sub">' + escapeHtml([dateLabel(tx.date), tx.category_path, tx.payer_alias ? tx.payer_alias + " 付" : ""].filter(Boolean).join("・")) +
+        (other ? "・已連到其他日記" : "") + "</div></div>";
+      const input = li.querySelector("input");
+      input.addEventListener("change", function () {
+        if (this.checked) linkPick.selected[tx.id] = tx; else delete linkPick.selected[tx.id];
+        li.classList.toggle("selected", this.checked);
+      });
+      ul.appendChild(li);
+    });
+  }
+
+  function openLinkDialog() {
+    const d = diaryEdit.d;
+    linkPick.selected = {};
+    diaryEdit.links.forEach(function (t) { linkPick.selected[t.id] = t; });
+    $("lFrom").value = shiftDate(d.date, -3);
+    $("lTo").value = shiftDate(d.date, 3);
+    $("linkDialog").showModal();
+    loadLinkCandidates();
+  }
+
+  function applyLinkDialog() {
+    // 保留順序：原本的在前，新加的接在後面；沒載入到的原本連結（期間外）也保留
+    const visible = {};
+    linkPick.items.forEach(function (t) { visible[t.id] = true; });
+    const kept = diaryEdit.links.filter(function (t) { return !visible[t.id] || linkPick.selected[t.id]; });
+    const keptIds = kept.map(function (t) { return t.id; });
+    const added = Object.keys(linkPick.selected)
+      .filter(function (id) { return keptIds.indexOf(id) < 0; })
+      .map(function (id) { return linkPick.selected[id]; });
+    diaryEdit.links = kept.concat(added);
+    $("linkDialog").close();
+    renderDiaryLinks();
+    refreshDiaryDirty();
+  }
+
+  function bindDiary() {
+    $("dContent").addEventListener("input", refreshDiaryDirty);
+    $("dEvent").addEventListener("change", refreshDiaryDirty);
+    $("dSaveBtn").addEventListener("click", saveDiary);
+    $("dCloseBtn").addEventListener("click", closeLiff);
+    $("dAppendBtn").addEventListener("click", appendDiary);
+    $("dDeleteBtn").addEventListener("click", deleteDiary);
+    $("dAddTx").addEventListener("click", openLinkDialog);
+    $("lLoad").addEventListener("click", loadLinkCandidates);
+    $("lCancel").addEventListener("click", function () { $("linkDialog").close(); });
+    $("lOk").addEventListener("click", applyLinkDialog);
+  }
+
   // ---------- 假資料（?mock=1）----------
 
   const MOCK_OPTIONS = {
@@ -1756,6 +2147,10 @@
     { id: "TXN_3", date: "2026-11-22", type: "expense", book_id: "B1", book_name: "家庭", category_id: "C3", category_path: "餐飲 / 正餐 / 晚餐", currency: "JPY", amount: 1200, amount_twd: 252, payer: "soso", payer_alias: "老公", note: "拉麵", item: "拉麵", activity_id: "EV1", activity_name: "日本旅行", settlement_status: "未核銷", updated_at: "c" },
     { id: "TXN_4", date: "2026-11-20", type: "income", book_id: "B2", book_name: "soso 個人", category_id: "C1", category_path: "餐飲 / 正餐 / 早餐", currency: "", amount: 500, amount_twd: 500, payer: "soso", payer_alias: "老公", note: "退款", item: "退款", activity_id: "", activity_name: "", settlement_status: "未核銷", updated_at: "d" }
   ];
+
+  function MOCK_DIARY_STATE() {
+    return diaryEdit.d;
+  }
 
   function mockApi(action, params) {
     return new Promise(function (resolve) {
@@ -1787,6 +2182,35 @@
           }) } });
           return;
         }
+        if (action === "diary_get") {
+          const mine = params.id !== "DY_OTHER";
+          resolve({ ok: true, data: {
+            diary: { id: params.id, date: "2026-11-22", scope: "family", author: mine ? "老公" : "老婆",
+              content: "今天在京都吃了拉麵，很好吃。", summary: "京都吃拉麵", tags: ["京都", "拉麵"],
+              event_id: "EV1", event_name: "日本旅行", event_day: 3, version: "2026/11/22 20:00:00",
+              can_edit: mine, can_append: true, can_delete: mine,
+              transactions: [Object.assign({}, MOCK_TXS[2], { own: true, editable: true })] },
+            options: mine ? { events: MOCK_OPTIONS.events } : undefined
+          } });
+          return;
+        }
+        if (action === "diary_update") {
+          const d = Object.assign({}, MOCK_DIARY_STATE());
+          if (params.content !== undefined) { d.content = params.content; d.summary = "（重新產生的摘要）"; }
+          if (params.event_id !== undefined) { d.event_id = params.event_id; d.event_name = params.event_id ? "日本旅行" : ""; }
+          if (params.link_ids) d.transactions = MOCK_TXS.filter(function (t) { return params.link_ids.indexOf(t.id) >= 0; });
+          d.version = String(Date.now());
+          resolve({ ok: true, data: { diary: d, saved: true, note: "" } });
+          return;
+        }
+        if (action === "diary_append") {
+          const d = Object.assign({}, MOCK_DIARY_STATE());
+          d.content += "\n" + (d.can_edit ? "" : "（老公補充）") + params.text;
+          d.version = String(Date.now());
+          resolve({ ok: true, data: { diary: d, note: "記了 1 筆花費" } });
+          return;
+        }
+        if (action === "diary_delete") { resolve({ ok: true, data: { deleted: true, deleted_transactions: params.with_transactions ? 1 : 0 } }); return; }
         if (action === "settle_list") {
           let items = MOCK_TXS.filter(function (t) { return t.type !== "income" && t.settlement_status === "未核銷"; })
             .map(function (t) { return Object.assign({}, t, { owner_label: "家庭" }); });
@@ -1833,6 +2257,7 @@
     bindList();
     bindEdit();
     bindSettle();
+    bindDiary();
     try {
       if (!MOCK) {
         if (!CONFIG.LIFF_ID) { showFatal("頁面還沒設定 LIFF ID"); return; }
@@ -1864,6 +2289,13 @@
           ids.split(",").filter(Boolean).forEach(function (id) { list.selected[id] = { id: id, pending: true }; });
         }
         showList(true);
+        return;
+      }
+
+      if (view === "diary") {
+        const id = q.get("id") || (MOCK ? (q.get("other") ? "DY_OTHER" : "DY_1") : "");
+        if (!id) { showFatal("缺少要編輯的日記"); return; }
+        await showDiary(id);
         return;
       }
 
