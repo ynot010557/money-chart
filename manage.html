@@ -86,7 +86,8 @@
   .field { margin-bottom: 14px; }
   .field:last-child { margin-bottom: 0; }
   .field > label, .field > .label { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 4px; }
-  .field .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+  .row.top { align-items: flex-start; }
   input, select, textarea {
     font: inherit; font-size: 16px; color: var(--text);
     background: var(--surface); border: 1px solid var(--border);
@@ -385,6 +386,72 @@
     <button type="button" class="btn link" id="dDeleteBtn">🗑 刪除這篇</button>
   </section>
 
+  <!-- 活動列表（ADR 0022） -->
+  <section id="eventsView" hidden>
+    <h1>活動</h1>
+    <div id="eventsNotice"></div>
+    <div id="eventsList"></div>
+  </section>
+
+  <!-- 活動詳細 -->
+  <section id="eventView" hidden>
+    <h1 id="evTitle">活動</h1>
+    <div id="eventNotice"></div>
+    <div class="card" id="evFollowups" hidden></div>
+    <div class="card">
+      <div class="muted" id="evMeta" style="margin-bottom:8px"></div>
+      <div class="field">
+        <label for="evName">名稱</label>
+        <input type="text" id="evName" maxlength="30">
+      </div>
+      <div class="field">
+        <label for="evAliases">別名</label>
+        <input type="text" id="evAliases" placeholder="用逗號或空白分開，例如：日本、東京行">
+        <div class="hint">記帳或問統計時寫到別名，也會對到這個活動</div>
+      </div>
+      <div class="field">
+        <label for="evType">類型</label>
+        <select id="evType"></select>
+      </div>
+      <div class="row top">
+        <div class="field" style="flex:1">
+          <label for="evStart">開始日</label>
+          <input type="date" id="evStart">
+        </div>
+        <div class="field" style="flex:1">
+          <label for="evEnd">結束日</label>
+          <input type="date" id="evEnd">
+        </div>
+      </div>
+      <div class="hint" id="evEndHint" style="margin:-8px 0 12px"></div>
+      <div class="field">
+        <span class="label">參加者</span>
+        <div id="evMembers" class="chips"></div>
+        <div class="hint">參加者記的帳在活動期間會自動掛上這個活動</div>
+      </div>
+      <div class="row top">
+        <div class="field" style="flex:1">
+          <label for="evCurrency">主要貨幣</label>
+          <select id="evCurrency"></select>
+        </div>
+        <div class="field" style="flex:1" id="evRateWrap">
+          <label for="evRate">自訂匯率</label>
+          <input type="text" id="evRate" inputmode="decimal" placeholder="自動">
+        </div>
+      </div>
+      <div class="hint" id="evRateHint"></div>
+    </div>
+    <div class="card">
+      <div class="label" style="font-size:13px;color:var(--text-2);margin-bottom:6px">狀態</div>
+      <div id="evStatusText" style="margin-bottom:10px"></div>
+      <div class="row">
+        <button type="button" class="btn plain" id="evEndBtn" style="flex:1">⏹ 結束活動</button>
+        <button type="button" class="btn plain" id="evReopenBtn" style="flex:1">▶️ 重新開始</button>
+      </div>
+      <button type="button" class="btn link" id="evCancelBtn">🗑 取消這個活動</button>
+    </div>
+  </section>
+
   <!-- 完成畫面（刪除後、核銷後） -->
   <section id="doneView" hidden>
     <div class="card" style="margin-top:16px">
@@ -411,6 +478,27 @@
     <button type="button" class="btn" id="settleExecBtn" disabled>確認核銷</button>
   </div>
 </div>
+
+<div class="bar" id="eventBar" hidden>
+  <div class="inner">
+    <button type="button" class="btn plain" id="evCloseBtn">關閉</button>
+    <button type="button" class="btn" id="evSaveBtn" disabled>儲存</button>
+  </div>
+</div>
+
+<!-- 活動：結束日 -->
+<dialog id="endDialog">
+  <h2>結束活動</h2>
+  <div class="field">
+    <label for="endDate">結束日</label>
+    <input type="date" id="endDate">
+    <div class="hint">選未來的日期 = 預計結束日，活動繼續、那天後自動結束</div>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn plain" id="endCancel">取消</button>
+    <button type="button" class="btn" id="endOk">結束</button>
+  </div>
+</dialog>
 
 <div class="bar" id="diaryBar" hidden>
   <div class="inner">
@@ -496,7 +584,7 @@
 </dialog>
 
 <!-- 版本號：每次更新這個檔案都要改（寫死在 HTML，JS 出錯也看得到；手機上看到舊版號 = 還在用快取） -->
-<footer class="version">版本 2026-11-27 記帳管理（列表、多筆修改、核銷、日記編輯）</footer>
+<footer class="version">版本 2026-11-27b 記帳管理（列表、多筆修改、核銷、日記、活動）</footer>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
@@ -646,11 +734,12 @@
   }
 
   function hideAllViews() {
-    ["listView", "editView", "doneView", "settleView", "diaryView"].forEach(function (id) { $(id).hidden = true; });
+    ["listView", "editView", "doneView", "settleView", "diaryView", "eventsView", "eventView"].forEach(function (id) { $(id).hidden = true; });
     $("listBar").hidden = true;
     $("editBar").hidden = true;
     $("settleBar").hidden = true;
     $("diaryBar").hidden = true;
+    $("eventBar").hidden = true;
   }
 
   function showFatal(message) {
@@ -768,7 +857,9 @@
     const back = nav.returnView;
     nav.fromList = false;
     nav.returnView = "";
-    if (back === "settle") showSettle(true); else showList(true);
+    if (back === "settle") showSettle(true);
+    else if (back === "events") showEvents(true);
+    else showList(true);
   });
 
   function openEditFrom(view, id) {
@@ -2127,6 +2218,403 @@
     $("lOk").addEventListener("click", applyLinkDialog);
   }
 
+  // ---------- 活動（ADR 0022）----------
+
+  const events = {
+    list: null,
+    loaded: false,
+    ev: null,          // 伺服器上的目前值
+    options: null,
+    members: [],       // 畫面上勾選的參加者
+    busy: false
+  };
+
+  const PHASE_LABEL = { active: "進行中", upcoming: "還沒開始", ended: "已結束" };
+
+  function shortYmd(d) {
+    return d ? Number(d.slice(5, 7)) + "/" + Number(d.slice(8, 10)) : "";
+  }
+
+  function eventPeriodText(e) {
+    return shortYmd(e.start_date) + "～" + (e.end_date ? shortYmd(e.end_date) : "");
+  }
+
+  function eventScopeText(e) {
+    return e.scope === "family"
+      ? "家庭・" + e.member_labels.join("、")
+      : "個人";
+  }
+
+  function renderEventsList() {
+    const box = $("eventsList");
+    box.innerHTML = "";
+    const groups = { active: [], upcoming: [], ended: [] };
+    events.list.forEach(function (e) { groups[e.phase].push(e); });
+    let any = false;
+    ["active", "upcoming", "ended"].forEach(function (phase) {
+      if (groups[phase].length === 0) return;
+      any = true;
+      const h = document.createElement("div");
+      h.className = "summary";
+      h.textContent = PHASE_LABEL[phase];
+      box.appendChild(h);
+      groups[phase].forEach(function (e) {
+        const card = document.createElement("div");
+        card.className = "card record";
+        card.innerHTML =
+          '<div class="top"><span>' + escapeHtml(e.name) + '<span class="badge">' + escapeHtml(e.type) + "</span></span>" +
+          "<span>" + escapeHtml(money(e.expense_total)) + "</span></div>" +
+          '<div class="sub muted">' + escapeHtml(
+            [eventPeriodText(e) + (e.day_count > 0 && phase === "active" ? "（第 " + e.day_count + " 天）" : ""),
+             eventScopeText(e),
+             e.default_currency !== "TWD" ? e.default_currency : "",
+             e.expense_count + " 筆"].filter(Boolean).join("・")) + "</div>";
+        card.addEventListener("click", function () { openEventFromList(e.id); });
+        box.appendChild(card);
+      });
+    });
+    if (!any) box.innerHTML = '<div class="empty">還沒有活動。在聊天室輸入「開始活動 日本旅行 11/20-11/27」建立。</div>';
+  }
+
+  async function loadEvents() {
+    $("eventsList").innerHTML = '<div class="skeleton"></div><div class="skeleton" style="width:70%"></div>';
+    let result;
+    try {
+      result = await apiGet("event_list", {});
+    } catch (e) {
+      $("eventsList").innerHTML = '<p class="error">網路連線失敗，請稍後再試</p>';
+      return;
+    }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      $("eventsList").innerHTML = '<p class="error">' + escapeHtml(errorMessage(result)) + "</p>";
+      return;
+    }
+    events.list = result.data.events;
+    events.loaded = true;
+    renderEventsList();
+  }
+
+  function showEvents(reload) {
+    hideAllViews();
+    $("boot").hidden = true;
+    $("eventsView").hidden = false;
+    if (reload || !events.loaded) loadEvents();
+  }
+
+  function openEventFromList(id) {
+    nav.fromList = true;
+    nav.returnView = "events";
+    history.pushState({ view: "event" }, "", "?view=event&id=" + encodeURIComponent(id) + (MOCK ? "&mock=1" : ""));
+    showEvent(id);
+  }
+
+  // 只收集和伺服器目前值不同的欄位
+  function eventChanges() {
+    const ev = events.ev;
+    const c = {};
+    if (!ev) return c;
+    const name = $("evName").value.trim();
+    if (name !== ev.name) c.event_name = name;
+    const aliases = $("evAliases").value.split(/[,，、\s]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+    if (aliases.join(",") !== ev.aliases.join(",")) c.aliases = aliases;
+    if ($("evType").value !== ev.type) c.event_type = $("evType").value;
+    if ($("evStart").value !== ev.start_date) c.start_date = $("evStart").value;
+    if ($("evEnd").value !== ev.end_date) c.end_date = $("evEnd").value;
+    if (events.members.slice().sort().join(",") !== ev.members.slice().sort().join(",")) c.member_user_ids = events.members.slice();
+    if ($("evCurrency").value !== ev.default_currency) c.default_currency = $("evCurrency").value;
+    const rate = $("evRate").value.trim();
+    const curRate = ev.exchange_rate > 0 ? String(ev.exchange_rate) : "";
+    if ($("evCurrency").value !== "TWD" && rate !== curRate && Number(rate || 0) !== ev.exchange_rate) c.exchange_rate = rate;
+    return c;
+  }
+
+  function refreshEventDirty() {
+    const c = eventChanges();
+    const map = { event_name: "evName", aliases: "evAliases", event_type: "evType", start_date: "evStart", end_date: "evEnd", default_currency: "evCurrency", exchange_rate: "evRate" };
+    Object.keys(map).forEach(function (k) { $(map[k]).classList.toggle("changed", k in c); });
+    $("evRateWrap").hidden = $("evCurrency").value === "TWD";
+    $("evRateHint").textContent = $("evCurrency").value === "TWD" ? "" :
+      "自訂匯率：1 " + $("evCurrency").value + " = ? 台幣；空白 = 自動抓即時匯率";
+    $("evSaveBtn").disabled = events.busy || Object.keys(c).length === 0;
+  }
+
+  function showEventNotice(kind, html) {
+    $("eventNotice").innerHTML = noticeHtml(kind, html);
+    if (html) window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function renderEvent() {
+    const ev = events.ev, opt = events.options;
+    $("evTitle").textContent = ev.name;
+    $("evMeta").textContent = [
+      PHASE_LABEL[ev.phase] + (ev.phase === "active" && ev.day_count > 0 ? "・第 " + ev.day_count + " 天" : ""),
+      ev.scope === "family" ? "家庭活動（" + (ev.book_name || "家庭帳本") + "）" : "個人活動",
+      "支出 " + money(ev.expense_total) + "（" + ev.expense_count + " 筆）",
+      ev.updated_by ? "最後由 " + ev.updated_by + " 修改" : ""
+    ].filter(Boolean).join("・");
+    $("evName").value = ev.name;
+    $("evAliases").value = ev.aliases.join("、");
+    const type = $("evType");
+    type.innerHTML = "";
+    opt.types.forEach(function (t) { type.appendChild(option(t, t, t === ev.type)); });
+    $("evStart").value = ev.start_date;
+    $("evEnd").value = ev.end_date;
+    $("evEndHint").textContent = ev.status === "ended"
+      ? "已結束：結束日要是今天以前；要繼續請按「重新開始」"
+      : "結束日空白 = 還不確定；選未來的日期會在那天後自動結束";
+    events.members = ev.members.slice();
+    const box = $("evMembers");
+    box.innerHTML = "";
+    opt.members.forEach(function (m) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = m.alias;
+      b.setAttribute("aria-pressed", events.members.indexOf(m.user_code) >= 0 ? "true" : "false");
+      if (ev.scope !== "family") b.disabled = true;
+      b.addEventListener("click", function () {
+        const i = events.members.indexOf(m.user_code);
+        if (i >= 0) events.members.splice(i, 1); else events.members.push(m.user_code);
+        b.setAttribute("aria-pressed", i >= 0 ? "false" : "true");
+        refreshEventDirty();
+      });
+      box.appendChild(b);
+    });
+    const cur = $("evCurrency");
+    cur.innerHTML = "";
+    opt.currencies.forEach(function (c) { cur.appendChild(option(c, c === "TWD" ? "台幣 TWD" : c, c === ev.default_currency)); });
+    $("evRate").value = ev.exchange_rate > 0 ? String(ev.exchange_rate) : "";
+
+    $("evStatusText").textContent =
+      ev.status === "ended"
+        ? "已在 " + shortYmd(ev.end_date) + " 結束"
+        : ev.end_date
+          ? "進行中，預計 " + shortYmd(ev.end_date) + " 結束"
+          : (ev.phase === "upcoming" ? "還沒開始（" + shortYmd(ev.start_date) + " 開始）" : "進行中，還沒設結束日");
+    $("evEndBtn").hidden = ev.status !== "active";
+    $("evReopenBtn").hidden = ev.status !== "ended";
+    $("eventBar").hidden = false;
+    refreshEventDirty();
+  }
+
+  // 改完之後要確認的事：期間外自動掛上的帳、匯率重算
+  function renderFollowups(f) {
+    const box = $("evFollowups");
+    box.innerHTML = "";
+    if (!f || (!f.outside_auto.length && !f.fx_recalc.length)) { box.hidden = true; return; }
+    box.hidden = false;
+    if (f.outside_auto.length) {
+      const div = document.createElement("div");
+      div.innerHTML =
+        "<b>有 " + f.outside_auto_total + " 筆自動掛上的帳在活動期間外</b>" +
+        '<ul class="lines" style="list-style:none;padding:0;margin:6px 0;font-size:14px;color:var(--text-2)">' +
+        f.outside_auto.map(function (t) { return "<li>" + escapeHtml(shortYmd(t.date) + " " + t.name + " " + (t.currency ? t.currency + " " + t.original_amount : money(t.amount))) + "</li>"; }).join("") +
+        "</ul>";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn small";
+      btn.textContent = "移出活動（" + f.outside_auto.length + " 筆）";
+      btn.addEventListener("click", function () { detachOutside(f.outside_auto); });
+      div.appendChild(btn);
+      box.appendChild(div);
+    }
+    if (f.fx_recalc.length) {
+      const div = document.createElement("div");
+      if (f.outside_auto.length) div.style.marginTop = "14px";
+      div.innerHTML =
+        "<b>有 " + f.fx_recalc_total + " 筆 " + escapeHtml(f.fx_currency) + " 帳可以用新匯率 " + f.fx_rate + " 重算</b>" +
+        '<ul class="lines" style="list-style:none;padding:0;margin:6px 0;font-size:14px;color:var(--text-2)">' +
+        f.fx_recalc.map(function (t) {
+          return "<li>" + escapeHtml(shortYmd(t.date) + " " + t.name + " " + t.currency + " " + t.original_amount + "：" +
+            (t.amount == null ? "未換算" : money(t.amount)) + " → " + money(t.new_amount)) + "</li>";
+        }).join("") + "</ul>";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn small";
+      btn.textContent = "重算（" + f.fx_recalc.length + " 筆）";
+      btn.addEventListener("click", function () { recalcFx(f.fx_recalc); });
+      div.appendChild(btn);
+      box.appendChild(div);
+    }
+  }
+
+  async function showEvent(id) {
+    hideAllViews();
+    $("boot").hidden = false;
+    $("boot").innerHTML = '<div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:70%"></div>';
+    $("evCloseBtn").textContent = nav.fromList ? "返回活動列表" : "關閉";
+    let result;
+    try {
+      result = await apiGet("event_get", { id: id });
+    } catch (e) {
+      showFatal("網路連線失敗，請稍後再試");
+      return;
+    }
+    if (!result.ok) {
+      if (handleAuthError(result)) return;
+      showFatal(errorMessage(result));
+      return;
+    }
+    events.ev = result.data.event;
+    events.options = result.data.options;
+    $("boot").hidden = true;
+    $("eventView").hidden = false;
+    $("eventNotice").innerHTML = "";
+    renderFollowups(null);
+    window.scrollTo(0, 0);
+    renderEvent();
+  }
+
+  function eventConflictNotice(result) {
+    showEventNotice("warn", escapeHtml(errorMessage(result)) +
+      '<br><button type="button" class="btn small plain" style="margin-top:8px" id="reloadEvent">重新載入</button>');
+    $("reloadEvent").onclick = function () { showEvent(events.ev.id); };
+  }
+
+  async function saveEvent() {
+    const c = eventChanges();
+    if (Object.keys(c).length === 0) return;
+    if ("event_name" in c && !c.event_name) { showEventNotice("err", "活動名稱不能是空白"); return; }
+    events.busy = true;
+    $("evSaveBtn").textContent = "儲存中…";
+    refreshEventDirty();
+    try {
+      const result = await apiPost("event_update", {
+        id: events.ev.id, expected_updated_at: events.ev.updated_at, changes: c, request_id: newRequestId()
+      });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        if (result.error.code === "CONFLICT") eventConflictNotice(result);
+        else showEventNotice("err", escapeHtml(errorMessage(result)));
+        return;
+      }
+      events.ev = result.data.event;
+      events.loaded = false;
+      renderEvent();
+      renderFollowups(result.data.followups);
+      showEventNotice("ok", "✅ 已儲存");
+    } catch (e) {
+      showEventNotice("err", "網路連線失敗，請重新載入確認是否已儲存");
+    } finally {
+      events.busy = false;
+      $("evSaveBtn").textContent = "儲存";
+      refreshEventDirty();
+    }
+  }
+
+  async function changeEventStatus(op, extra, doneText) {
+    if (Object.keys(eventChanges()).length > 0) {
+      showEventNotice("warn", "你還有沒儲存的修改，請先按「儲存」。");
+      return;
+    }
+    try {
+      const result = await apiPost("event_status", Object.assign({
+        id: events.ev.id, expected_updated_at: events.ev.updated_at, op: op, request_id: newRequestId()
+      }, extra || {}));
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        if (result.error.code === "CONFLICT") eventConflictNotice(result);
+        else showEventNotice("err", escapeHtml(errorMessage(result)));
+        return;
+      }
+      events.loaded = false;
+      if (op === "cancel") {
+        const s = result.data.summary || {};
+        hideAllViews();
+        $("doneText").textContent = "🗑 已取消「" + events.ev.name + "」" +
+          (s.cleared_transactions || s.cleared_diaries
+            ? "，並把 " + (s.cleared_transactions || 0) + " 筆帳、" + (s.cleared_diaries || 0) + " 篇日記的活動標記清掉。"
+            : "。");
+        $("doneClose").textContent = nav.fromList ? "返回活動列表" : "關閉";
+        $("doneBack").hidden = true;
+        $("doneView").hidden = false;
+        return;
+      }
+      events.ev = result.data.event;
+      renderEvent();
+      renderFollowups(result.data.followups);
+      showEventNotice("ok", escapeHtml(typeof doneText === "function" ? doneText(result.data.summary || {}) : doneText));
+    } catch (e) {
+      showEventNotice("err", "網路連線失敗，請重新載入確認");
+    }
+  }
+
+  async function detachOutside(items) {
+    const ok = await confirmBox("把這 " + items.length + " 筆移出「" + events.ev.name + "」嗎？\n（依活動自動套用的外幣會改回台幣）", "移出");
+    if (!ok) return;
+    try {
+      const result = await apiPost("event_detach", {
+        id: events.ev.id,
+        items: items.map(function (t) { return { id: t.id, expected_updated_at: t.updated_at }; }),
+        request_id: newRequestId()
+      });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        showEventNotice(result.error.code === "CONFLICT" ? "warn" : "err", escapeHtml(errorMessage(result) + "（這次沒有移出任何一筆）"));
+        return;
+      }
+      showEventNotice("ok", escapeHtml("🧹 已移出 " + result.data.detached + " 筆"));
+      renderFollowups(null);
+      showEvent(events.ev.id).then(function () { showEventNotice("ok", escapeHtml("🧹 已移出 " + result.data.detached + " 筆")); });
+    } catch (e) {
+      showEventNotice("err", "網路連線失敗，請重新載入確認");
+    }
+  }
+
+  async function recalcFx(items) {
+    const ok = await confirmBox("用匯率 " + events.ev.exchange_rate + " 重算這 " + items.length + " 筆嗎？", "重算");
+    if (!ok) return;
+    try {
+      const result = await apiPost("event_fx_recalc", {
+        id: events.ev.id, ids: items.map(function (t) { return t.id; }), request_id: newRequestId()
+      });
+      if (!result.ok) {
+        if (handleAuthError(result)) return;
+        showEventNotice("err", escapeHtml(errorMessage(result)));
+        return;
+      }
+      showEvent(events.ev.id).then(function () { showEventNotice("ok", escapeHtml("💱 已重算 " + result.data.recalculated + " 筆")); });
+    } catch (e) {
+      showEventNotice("err", "網路連線失敗，請重新載入確認");
+    }
+  }
+
+  function bindEvents() {
+    ["evName", "evAliases", "evStart", "evEnd", "evRate"].forEach(function (id) {
+      $(id).addEventListener("input", refreshEventDirty);
+      $(id).addEventListener("change", refreshEventDirty);
+    });
+    ["evType", "evCurrency"].forEach(function (id) { $(id).addEventListener("change", refreshEventDirty); });
+    $("evSaveBtn").addEventListener("click", saveEvent);
+    $("evCloseBtn").addEventListener("click", backToList);
+    $("evEndBtn").addEventListener("click", function () {
+      $("endDate").value = todayParts().text;
+      $("endDate").min = events.ev.start_date;
+      $("endDialog").showModal();
+    });
+    $("endCancel").addEventListener("click", function () { $("endDialog").close(); });
+    $("endOk").addEventListener("click", function () {
+      const d = $("endDate").value;
+      if (!d || d < events.ev.start_date) return;
+      $("endDialog").close();
+      changeEventStatus("end", { end_date: d }, function (s) {
+        return s.planned ? "📅 已把預計結束日設為 " + shortYmd(s.end_date) + "，那天後會自動結束" : "⏹ 已結束（" + shortYmd(s.end_date) + "）";
+      });
+    });
+    $("evReopenBtn").addEventListener("click", async function () {
+      const ok = await confirmBox("重新開始「" + events.ev.name + "」？\n結束日會清空，參加者記的帳會再自動掛上。", "重新開始");
+      if (ok) changeEventStatus("reopen", {}, "▶️ 已重新開始");
+    });
+    $("evCancelBtn").addEventListener("click", async function () {
+      const e = events.ev;
+      const ok = await confirmBox(
+        "確定要取消「" + e.name + "」嗎？\n\n掛在這個活動的 " + e.expense_count + " 筆帳（以及日記）的活動標記都會清掉，依活動自動套用的外幣會改回台幣。\n取消後無法復原。",
+        "取消活動", true, "不要"
+      );
+      if (ok) changeEventStatus("cancel", {}, "");
+    });
+  }
+
   // ---------- 假資料（?mock=1）----------
 
   const MOCK_OPTIONS = {
@@ -2147,6 +2635,13 @@
     { id: "TXN_3", date: "2026-11-22", type: "expense", book_id: "B1", book_name: "家庭", category_id: "C3", category_path: "餐飲 / 正餐 / 晚餐", currency: "JPY", amount: 1200, amount_twd: 252, payer: "soso", payer_alias: "老公", note: "拉麵", item: "拉麵", activity_id: "EV1", activity_name: "日本旅行", settlement_status: "未核銷", updated_at: "c" },
     { id: "TXN_4", date: "2026-11-20", type: "income", book_id: "B2", book_name: "soso 個人", category_id: "C1", category_path: "餐飲 / 正餐 / 早餐", currency: "", amount: 500, amount_twd: 500, payer: "soso", payer_alias: "老公", note: "退款", item: "退款", activity_id: "", activity_name: "", settlement_status: "未核銷", updated_at: "d" }
   ];
+
+  const MOCK_EVENT = {
+    id: "EV1", name: "日本旅行", aliases: ["日本", "東京行"], type: "旅行", scope: "family", book_id: "B1", book_name: "家庭",
+    members: ["soso", "twotwo"], member_labels: ["老公", "老婆"], start_date: "2026-11-20", end_date: "2026-11-30",
+    status: "active", phase: "active", default_currency: "JPY", exchange_rate: 0.21, day_count: 8,
+    expense_count: 12, expense_total: 38600, created_by: "老公", updated_by: "老婆", updated_at: "v1"
+  };
 
   function MOCK_DIARY_STATE() {
     return diaryEdit.d;
@@ -2182,6 +2677,44 @@
           }) } });
           return;
         }
+        if (action === "event_list") {
+          resolve({ ok: true, data: { events: [MOCK_EVENT, Object.assign({}, MOCK_EVENT, { id: "EV2", name: "跨年聚會", type: "聚會", phase: "ended", status: "ended",
+            start_date: "2025-12-31", end_date: "2026-01-01", default_currency: "TWD", exchange_rate: 0, expense_count: 3, expense_total: 4200, day_count: 2 })] } });
+          return;
+        }
+        if (action === "event_get") {
+          resolve({ ok: true, data: { event: Object.assign({}, MOCK_EVENT, params.id === "EV2" ? { id: "EV2", status: "ended", phase: "ended", end_date: "2026-11-24" } : {}),
+            options: { types: ["旅行", "聚會", "節日", "其他"], currencies: ["TWD", "JPY", "USD", "KRW"],
+              members: [{ user_code: "soso", alias: "老公" }, { user_code: "twotwo", alias: "老婆" }], today: "2026-11-27" } } });
+          return;
+        }
+        if (action === "event_update") {
+          const c = params.changes;
+          const ev = Object.assign({}, events.ev, { updated_at: String(Date.now()) });
+          if (c.event_name) ev.name = c.event_name;
+          if (c.aliases) ev.aliases = c.aliases;
+          if (c.start_date) ev.start_date = c.start_date;
+          if (c.end_date !== undefined) ev.end_date = c.end_date;
+          if (c.member_user_ids) { ev.members = c.member_user_ids; ev.member_labels = c.member_user_ids.map(function (x) { return x === "soso" ? "老公" : "老婆"; }); }
+          if (c.default_currency) ev.default_currency = c.default_currency;
+          if (c.exchange_rate !== undefined) ev.exchange_rate = Number(c.exchange_rate) || 0;
+          resolve({ ok: true, data: { event: ev, saved: true, followups: {
+            outside_auto: c.start_date ? [{ id: "TXN_9", date: "2026-11-19", name: "便當", amount: 100, currency: "", updated_at: "x" }] : [], outside_auto_total: c.start_date ? 1 : 0,
+            fx_recalc: c.exchange_rate ? [{ id: "TXN_3", date: "2026-11-22", name: "拉麵", amount: 252, currency: "JPY", original_amount: 1200, new_amount: Math.round(1200 * Number(c.exchange_rate)), updated_at: "c" }] : [],
+            fx_recalc_total: c.exchange_rate ? 1 : 0, fx_currency: "JPY", fx_rate: Number(c.exchange_rate) || 0 } } });
+          return;
+        }
+        if (action === "event_status") {
+          if (params.op === "cancel") { resolve({ ok: true, data: { cancelled: true, summary: { cleared_transactions: 5, cleared_diaries: 2 } } }); return; }
+          const ev = Object.assign({}, events.ev, { updated_at: String(Date.now()) });
+          if (params.op === "end") { ev.end_date = params.end_date; if (params.end_date <= "2026-11-27") { ev.status = "ended"; ev.phase = "ended"; } }
+          if (params.op === "reopen") { ev.status = "active"; ev.phase = "active"; ev.end_date = ""; }
+          resolve({ ok: true, data: { event: ev, summary: { end_date: params.end_date, planned: params.end_date > "2026-11-27" },
+            followups: { outside_auto: [], outside_auto_total: 0, fx_recalc: [], fx_recalc_total: 0 } } });
+          return;
+        }
+        if (action === "event_detach") { resolve({ ok: true, data: { detached: params.items.length } }); return; }
+        if (action === "event_fx_recalc") { resolve({ ok: true, data: { recalculated: params.ids.length } }); return; }
         if (action === "diary_get") {
           const mine = params.id !== "DY_OTHER";
           resolve({ ok: true, data: {
@@ -2258,6 +2791,7 @@
     bindEdit();
     bindSettle();
     bindDiary();
+    bindEvents();
     try {
       if (!MOCK) {
         if (!CONFIG.LIFF_ID) { showFatal("頁面還沒設定 LIFF ID"); return; }
@@ -2289,6 +2823,19 @@
           ids.split(",").filter(Boolean).forEach(function (id) { list.selected[id] = { id: id, pending: true }; });
         }
         showList(true);
+        return;
+      }
+
+      if (view === "events") {
+        showEvents(true);
+        return;
+      }
+
+      if (view === "event") {
+        const id = q.get("id") || (MOCK ? "EV1" : "");
+        if (!id) { showFatal("缺少要修改的活動"); return; }
+        nav.fromList = false;
+        await showEvent(id);
         return;
       }
 
